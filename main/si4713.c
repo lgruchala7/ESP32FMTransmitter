@@ -46,43 +46,6 @@ typedef enum
     GPO_SET = 0x81,         /* Sets GPO3 output level (low or high) */
 } si4713_command_t;
 
-/* FM transmitter property summary */
-typedef enum
-{
-    GPO_IEN = 0x0001,                   /* Enables interrupt sources. 0x0000 */
-    DIGITAL_INPUT_FORMAT = 0x0101,      /* Configures the digital input format. 0x0000 */
-    DIGITAL_INPUT_SAMPLE_RATE = 0x0103, /* Configures the digital input sample rate in 10 Hz steps. Default is 0. 0x0000 */
-    REFCLK_FREQ = 0x0201,               /* Sets frequency of the reference clock in Hz. The range is31130 to 34406 Hz, or 0 to disable the AFC. Default is 32768 Hz. 0x8000 */
-    REFCLK_PRESCALE = 0x0202,           /* Sets the prescaler value for the reference clock. 0x0001 */
-    TX_COMPONENT_ENABLE = 0x2100,       /* Enable transmit multiplex signal components. Default has pilot and L-R enabled. 0x0003 */
-    TX_AUDIO_DEVIATION = 0x2101,        /* Configures audio frequency deviation level. Units are in 10 Hz increments. Default is 6285 (68.25 kHz). 0x1AA9 */
-    TX_PILOT_DEVIATION = 0x2102,        /* Configures pilot tone frequency deviation level. Units are in 10 Hz increments. Default is 675 (6.75 kHz) 0x02A3 */
-    TX_RDS_DEVIATION = 0x2103,          /* Si4713 Only. Configures the RDS/RBDS frequency deviation level. Units are in 10 Hz increments. Default is 2 kHz. 0x00C8 */
-    TX_LINE_INPUT_LEVEL = 0x2104,       /* Configures maximum analog line input level to the LIN/RIN pins to reach the maximum deviation level programmed into the audio deviation property TX Audio Deviation. Default is 636 mV PK . 0x327C */
-    TX_LINE_INPUT_MUTE = 0x2105,        /* Sets line input mute. L and R inputs may be independently muted. Default is not muted. 0x0000 */
-    TX_PREEMPHASIS = 0x2106,            /* Configures preemphasis time constant. Default is 0 (75 μS). 0x0000 */
-    TX_PILOT_FREQUENCY = 0x2107,        /* Configures the frequency of the stereo pilot. Default is 19000 Hz. 0x4A38 */
-    TX_ACOMP_ENABLE = 0x2200,           /* Enables audio dynamic range control. Default is 0 (disabled). 0x0002 */
-    TX_ACOMP_THRESHOLD = 0x2201,        /* Sets the threshold level for audio dynamic range control. Default is –40 dB. 0xFFD8 */
-    TX_ACOMP_ATTACK_TIME = 0x2202,      /* Sets the attack time for audio dynamic range control. Default is 0 (0.5 ms). 0x0000 */
-    TX_ACOMP_RELEASE_TIME = 0x2203,     /* Sets the release time for audio dynamic range control. Default is 4 (1000 ms). 0x0004 */
-    TX_ACOMP_GAIN = 0x2204,             /* Sets the gain for audio dynamic range control. Default is 15 dB. 0x000F */
-    TX_LIMITER_RELEASE_TIME = 0x2205,   /* Sets the limiter release time. Default is 102 (5.01 ms) 0x0066 */
-    TX_ASQ_INTERRUPT_SOURCE = 0x2300,   /* Configures measurements related to signal quality metrics. Default is none selected. 0x0000 */
-    TX_ASQ_LEVEL_LOW = 0x2301,          /* Configures low audio input level detection threshold. This threshold can be used to detect silence on the incoming audio. 0x0000 */
-    TX_ASQ_DURATION_LOW = 0x2302,       /* Configures the duration which the input audio level must be below the low threshold in order to detect a low audio condition. 0x0000 */
-    TX_ASQ_LEVEL_HIGH = 0x2303,         /* Configures high audio input level detection threshold. This threshold can be used to detect activity on the incoming audio. 0x0000 */
-    TX_ASQ_DURATION_HIGH = 0x2304,      /* Configures the duration which the input audio level must be above the high threshold in order to detect a high audio condition. 0x0000 */
-    TX_RDS_INTERRUPT_SOURCE = 0x2C00,   /* Si4713 Only. Configure RDS interrupt sources. Default is none selected. 0x0000 */
-    TX_RDS_PI = 0x2C01,                 /* Si4713 Only. Sets transmit RDS program identifier. 0x40A7 */
-    TX_RDS_PS_MIX = 0x2C02,             /* Si4713 Only. Configures mix of RDS PS Group with RDS Group Buffer. 0x0003 */
-    TX_RDS_PS_MISC = 0x2C03,            /* Si4713 Only. Miscellaneous bits to transmit along with RDS_PS Groups. 0x1008 */
-    TX_RDS_PS_REPEAT_COUNT = 0x2C04,    /* Si4713 Only. Number of times to repeat transmission of a PS message before transmitting the next PS message. 0x0003 */
-    TX_RDS_PS_MESSAGE_COUNT = 0x2C05,   /* Si4713 Only. Number of PS messages in use. 0x0001 */
-    TX_RDS_PS_AF = 0x2C06,              /* Si4713 Only. RDS Program Service Alternate Frequency. This provides the ability to inform the receiver of a single alternate frequency using AF Method A coding and is transmitted along with the RDS_PS Groups. 0xE0E0 */
-    TX_RDS_FIFO_SIZESi4713 = 0x2C07,    /* Only. Number of blocks reserved for the FIFO. Note that the value written must be one larger than the desired FIFO size. 0x0000 */
-} si4713_argument_t;
-
 /* Structure of Si4713 status response */
 typedef struct
 {
@@ -102,57 +65,159 @@ typedef struct
     Local function declarations
 ===================================================================*/
 
-static inline esp_err_t si4713_read_status(i2c_master_dev_handle_t dev_handle, si4713_status_response_t *status_ptr);
+static void si4713_read_status(i2c_master_dev_handle_t dev_handle, si4713_status_response_t *status_ptr, uint32_t timeout_ms);
+static void si4713_read_response(i2c_master_dev_handle_t dev_handle, uint8_t *resp_ptr, uint8_t resp_len);
+static inline void si4713_send_cmd(i2c_master_dev_handle_t dev_handle, uint8_t cmd, const uint8_t *args, uint8_t arg_cnt);
 
 /*==================================================================
     Function definitions
 ===================================================================*/
 
 /**
- * @brief Read status value from Si4713
+ * @brief Read status value from Si4713.
  *
- * @param[in] dev_handle I2C master device handle
- * @param[out] status_ptr status variable pointer
- * @return Si4713 status read operation result.
+ * @param[in] dev_handle I2C master device handle.
+ * @param[out] status_ptr status variable pointer.
+ * @param[in] timeout_ms Timeout for valid status response reception in ms.
  */
-static inline esp_err_t si4713_read_status(i2c_master_dev_handle_t dev_handle, si4713_status_response_t *status_ptr)
+static void si4713_read_status(i2c_master_dev_handle_t dev_handle, si4713_status_response_t *status_ptr, uint32_t timeout_ms)
 {
-    return i2c_read_response(dev_handle, (uint8_t *)status_ptr, 1);
+    uint32_t start = xTaskGetTickCount();
+    uint32_t timeout = pdMS_TO_TICKS(timeout_ms);
+    do
+    {
+        ESP_ERROR_CHECK(i2c_read_response(dev_handle, (uint8_t *)status_ptr, 1));
+    } while ((0U == status_ptr->cts) && ((xTaskGetTickCount() - start) < timeout));
 }
 
 /**
- * @brief Perform Si4713 power-up
+ * @brief Read multi-byte response from Si4713.
  *
- * This function sends power-up in analog mode command to Si4713
- * and checks the response status.
+ * @param[in] dev_handle I2C master device handle.
+ * @param[out] resp_ptr Response buffer pointer.
+ * @param[in] resp_len Response buffer length.
+ */
+static inline void si4713_read_response(i2c_master_dev_handle_t dev_handle, uint8_t *resp_ptr, uint8_t resp_len)
+{
+    ESP_ERROR_CHECK(i2c_read_response(dev_handle, resp_ptr, resp_len));
+}
+
+/**
+ * @brief Send command with args to Si4713.
  *
- * @param[in] dev_handle I2C master device handle
+ * @param[in] dev_handle I2C master device handle.
+ * @param[in] cmd Si4713 command code.
+ * @param[in] args Si4713 command arguments.
+ * @param[in] arg_cnt Si4713 command argument count.
+ */
+static inline void si4713_send_cmd(i2c_master_dev_handle_t dev_handle, uint8_t cmd, const uint8_t *args, uint8_t arg_cnt)
+{
+    ESP_ERROR_CHECK(i2c_send_cmd(dev_handle, cmd, args, arg_cnt));
+}
+
+/**
+ * @brief Perform Si4713 powerup
+ *
+ * This function sends Powerup in Analog Mode command to Si4713 and checks the response status.
+ *
+ * @param[in] dev_handle I2C master device handle.
  * @return
- *      - ESP_OK: Power-up succesful
- *      - ESP_FAIL: Power-up failed
+ *      - ESP_OK: Powerup succesful.
+ *      - ESP_FAIL: Powerup failed.
  */
 esp_err_t si4713_powerup_analog(i2c_master_dev_handle_t dev_handle)
 {
+    esp_err_t ret_val = ESP_FAIL;
+
     /*  0xC2 -> Set to FM Transmit. Enable interrupts.
         0x50 -> Set to Analog Line Input */
     uint8_t args[2] = {0xC2U, 0x50U};
-    esp_err_t ret_val = ESP_FAIL;
+    si4713_send_cmd(dev_handle, POWER_UP, args, sizeof(args));
+
     si4713_status_response_t status;
-
-    ESP_ERROR_CHECK(i2c_send_cmd(dev_handle, POWER_UP, args, 2U));
-
-    uint32_t start = xTaskGetTickCount();
-    uint32_t timeout = pdMS_TO_TICKS(T_CTS_LONG_MS);
-    do
-    {
-        ESP_ERROR_CHECK(si4713_read_status(dev_handle, &status));
-    } while ((0U == status.cts) && ((xTaskGetTickCount() - start) < timeout));
+    si4713_read_status(dev_handle, &status, T_CTS_LONG_MS);
 
     if (1U == status.cts)
     {
         ret_val = ESP_OK;
     }
-    ESP_LOGI(SI4713_TAG, "SI4713 power-up status = %X", status);
+    ESP_LOGI(SI4713_TAG, "SI4713 powerup status = 0x%X", status);
+
+    return ret_val;
+}
+
+/**
+ * @brief Set property of Si4713.
+ *
+ * @param[in] dev_handle I2C master device handle.
+ * @param[in] property Si4713 property.
+ * @param[in] property_val Si4713 property value.
+ * @return
+ *      - ESP_OK: Set Property succesful.
+ *      - ESP_FAIL: Set Property failed.
+ */
+esp_err_t si4713_set_property(i2c_master_dev_handle_t dev_handle, si4713_property_t property, uint16_t property_val)
+{
+    esp_err_t ret_val = ESP_FAIL;
+
+    uint8_t args[5];
+    args[0] = 0x00U;
+    args[1] = ((uint16_t)property >> 8U) & 0xFFU;
+    args[2] = (uint16_t)property & 0xFFU;
+    args[3] = (property_val >> 8U) & 0xFFU;
+    args[4] = property_val & 0xFFU;
+    si4713_send_cmd(dev_handle, SET_PROPERTY, args, sizeof(args));
+
+    si4713_status_response_t status;
+    si4713_read_status(dev_handle, &status, T_CTS_SHORT_MS);
+    if (1U == status.cts)
+    {
+        ret_val = ESP_OK;
+    }
+    ESP_LOGI(SI4713_TAG, "SI4713 set property 0x%X status = 0x%X", property, status);
+
+    return ret_val;
+}
+
+/**
+ * @brief Get Si4713 info.
+ *
+ * Returns the part number, chip revision, firmware revision, patch revision and component revision numbers.
+ *
+ * @param[in] dev_handle I2C master device handle.
+ * @return
+ *      - ESP_OK: Info reading succesful.
+ *      - ESP_FAIL: Info reading failed.
+ */
+esp_err_t si4713_get_rev(i2c_master_dev_handle_t dev_handle)
+{
+    esp_err_t ret_val = ESP_FAIL;
+    uint8_t arg = 0x00U;
+
+    si4713_send_cmd(dev_handle, GET_REV, &arg, sizeof(arg));
+
+    si4713_status_response_t status;
+    si4713_read_status(dev_handle, &status, T_CTS_SHORT_MS);
+    if (1U == status.cts)
+    {
+        ret_val = ESP_OK;
+    }
+
+    if (ESP_OK == ret_val)
+    {
+        uint8_t response[9];
+        si4713_read_response(dev_handle, response, sizeof(response));
+
+        ESP_LOGI(SI4713_TAG, "SI4713 part number = 0x%X", response[1]);                                              // (0x0D = Si4713)
+        ESP_LOGI(SI4713_TAG, "SI4713 firmware revision = v%.2d.%.2d", (response[2] - 0x30U), (response[3] - 0x30U)); // in ASCII 0x30 = 0
+        ESP_LOGI(SI4713_TAG, "SI4713 patch id = 0x%X", ((response[4] << 8U) & 0xFF00U) | (response[5] & 0xFFU));
+        ESP_LOGI(SI4713_TAG, "SI4713 component firmware revision = v%.2d.%.2d", (response[6] - 0x30U), (response[7] - 0x30U));
+        ESP_LOGI(SI4713_TAG, "SI4713 chip revision = rev%c", response[8]);
+    }
+    else
+    {
+        ESP_LOGE(SI4713_TAG, "SI4713 CTS timeout expired");
+    }
 
     return ret_val;
 }

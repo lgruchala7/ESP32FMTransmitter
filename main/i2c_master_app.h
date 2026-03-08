@@ -44,10 +44,9 @@
     Function declarations
 ===================================================================*/
 
-void i2c_master_init(i2c_master_bus_handle_t *bus_handle, i2c_master_dev_handle_t *dev_handle);
-esp_err_t i2c_send_cmd(i2c_master_dev_handle_t dev_handle, uint8_t cmd, uint8_t *args, uint8_t arg_cnt);
+void i2c_master_init(i2c_master_bus_handle_t *bus_handle, i2c_master_dev_handle_t *dev_handle, uint16_t dev_addr);
 esp_err_t i2c_write_read_response(i2c_master_dev_handle_t dev_handle, uint8_t reg_addr, uint8_t *data, size_t len);
 esp_err_t i2c_read_response(i2c_master_dev_handle_t dev_handle, uint8_t *data, size_t len);
-esp_err_t i2c_send_cmd(i2c_master_dev_handle_t dev_handle, uint8_t cmd, uint8_t *args, uint8_t arg_cnt);
+esp_err_t i2c_send_cmd(i2c_master_dev_handle_t dev_handle, uint8_t cmd, const uint8_t *args, uint8_t arg_cnt);
 
 #endif /* __I2C_MASTER_APP_H__ */

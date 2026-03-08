@@ -69,8 +69,12 @@ static char *bda2str(uint8_t *bda, char *str, size_t size);
 static void bt_app_dev_cb(esp_bt_dev_cb_event_t event, esp_bt_dev_cb_param_t *param);
 /* GAP callback function */
 static void bt_app_gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *param);
-/* handler for bluetooth stack enabled events */
+/* Handler for bluetooth stack enabled events */
 static void bt_av_hdl_stack_evt(uint16_t event, void *p_param);
+/* Si4713 configuration function */
+static inline void configure_si4713(i2c_master_dev_handle_t dev_handle);
+/* Si4713 powerup function */
+static inline void powerup_si4713(i2c_master_dev_handle_t dev_handle);
 
 /*==================================================================
     Function definitions
@@ -242,6 +246,35 @@ static void bt_av_hdl_stack_evt(uint16_t event, void *p_param)
     }
 }
 
+static inline void powerup_si4713(i2c_master_dev_handle_t dev_handle)
+{
+    /* release si4713 from reset */
+    gpio_set_level(GPIO_OUTPUT_SI4713_RST, 1U);
+
+    if (ESP_OK == si4713_powerup_analog(dev_handle))
+    {
+        ESP_LOGI(SI4713_TAG, "Si4713 initialized successfully");
+    }
+    else
+    {
+        ESP_LOGI(SI4713_TAG, "Si4713 initialization failed");
+    }
+    si4713_set_property(dev_handle, TX_LINE_INPUT_LEVEL, TX_LINE_INPUT_LEVEL_DEFAULT_VAL);
+}
+
+static inline void configure_si4713(i2c_master_dev_handle_t dev_handle)
+{
+    si4713_get_rev(dev_handle);
+    si4713_set_property(dev_handle, GPO_IEN, GPO_IEN_DEFAULT_VAL);
+    si4713_set_property(dev_handle, REFCLK_FREQ, REFCLK_FREQ_DEFAULT_VAL);
+    si4713_set_property(dev_handle, REFCLK_PRESCALE, REFCLK_PRESCALE_DEFAULT_VAL);
+    si4713_set_property(dev_handle, TX_LINE_INPUT_MUTE, TX_LINE_INPUT_MUTE_DEFAULT_VAL);
+    si4713_set_property(dev_handle, TX_PREEMPHASIS, TX_PREEMPHASIS_DEFAULT_VAL);
+    si4713_set_property(dev_handle, TX_PILOT_FREQUENCY, TX_PILOT_FREQUENCY_DEFAULT_VAL);
+    si4713_set_property(dev_handle, TX_AUDIO_DEVIATION, TX_AUDIO_DEVIATION_DEFAULT_VAL);
+    si4713_set_property(dev_handle, TX_PILOT_DEVIATION, TX_PILOT_DEVIATION_DEFAULT_VAL);
+}
+
 void app_main(void)
 {
     char bda_str[18] = {0};
@@ -311,7 +344,7 @@ void app_main(void)
 
     i2c_master_bus_handle_t bus_handle;
     i2c_master_dev_handle_t dev_handle;
-    i2c_master_init(&bus_handle, &dev_handle);
+    i2c_master_init(&bus_handle, &dev_handle, SI4173_SENSOR_ADDR);
     ESP_LOGI(I2C_MASTER_TAG, "I2C initialized successfully");
 
     gpio_config_t rst_pin_config =
@@ -324,17 +357,8 @@ void app_main(void)
         };
 
     gpio_config(&rst_pin_config);
-
-    /* release si4713 from reset */
-    gpio_set_level(GPIO_OUTPUT_SI4713_RST, 1U);
     ESP_LOGI(SI4713_TAG, "GPIO initialized successfully");
 
-    if (ESP_OK == si4713_powerup_analog(dev_handle))
-    {
-        ESP_LOGI(SI4713_TAG, "Si4713 initialized successfully");
-    }
-    else
-    {
-        ESP_LOGI(SI4713_TAG, "Si4713 initialization failed");
-    }
+    powerup_si4713(dev_handle);
+    configure_si4713(dev_handle);
 }

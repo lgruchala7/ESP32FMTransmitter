@@ -9,7 +9,6 @@ Includes
 ===================================================================*/
 
 #include "i2c_master_app.h"
-#include "si4713_cfg.h"
 #include "freertos/FreeRTOS.h"
 
 /*==================================================================
@@ -42,7 +41,7 @@ Includes
  * @param[out] bus_handle I2C master bus handle
  * @param[out] dev_handle I2C master device handle
  */
-void i2c_master_init(i2c_master_bus_handle_t *bus_handle, i2c_master_dev_handle_t *dev_handle)
+void i2c_master_init(i2c_master_bus_handle_t *bus_handle, i2c_master_dev_handle_t *dev_handle, uint16_t dev_addr)
 {
     i2c_master_bus_config_t bus_config = {
         .i2c_port = I2C_MASTER_NUM,
@@ -56,7 +55,7 @@ void i2c_master_init(i2c_master_bus_handle_t *bus_handle, i2c_master_dev_handle_
 
     i2c_device_config_t dev_config = {
         .dev_addr_length = I2C_ADDR_BIT_LEN_7,
-        .device_address = SI4173_SENSOR_ADDR,
+        .device_address = dev_addr,
         .scl_speed_hz = I2C_MASTER_FREQ_HZ,
     };
     ESP_ERROR_CHECK(i2c_master_bus_add_device(*bus_handle, &dev_config, dev_handle));
@@ -92,7 +91,7 @@ esp_err_t i2c_read_response(i2c_master_dev_handle_t dev_handle, uint8_t *data, s
 }
 
 /**
- * @brief Send a command with arguments to a SI4713 sensor.
+ * @brief Send a command with arguments to an I2C slave device.
  *
  * This function
  *
@@ -102,7 +101,7 @@ esp_err_t i2c_read_response(i2c_master_dev_handle_t dev_handle, uint8_t *data, s
  * @param[in] arg_cnt Number of arguments.
  * @return Master write operation result.
  */
-esp_err_t i2c_send_cmd(i2c_master_dev_handle_t dev_handle, uint8_t cmd, uint8_t *args, uint8_t arg_cnt)
+esp_err_t i2c_send_cmd(i2c_master_dev_handle_t dev_handle, uint8_t cmd, const uint8_t *args, uint8_t arg_cnt)
 {
     uint8_t write_buf[arg_cnt + 1U];
     uint8_t write_buf_idx = 0U;
