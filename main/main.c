@@ -75,6 +75,8 @@ static void bt_av_hdl_stack_evt(uint16_t event, void *p_param);
 static inline void configure_si4713(i2c_master_dev_handle_t dev_handle);
 /* Si4713 powerup function */
 static inline void powerup_si4713(i2c_master_dev_handle_t dev_handle);
+/* Si4713 tuning function */
+static inline void tune_si4713(i2c_master_dev_handle_t dev_handle);
 
 /*==================================================================
     Function definitions
@@ -251,7 +253,7 @@ static inline void powerup_si4713(i2c_master_dev_handle_t dev_handle)
     /* release si4713 from reset */
     gpio_set_level(GPIO_OUTPUT_SI4713_RST, 1U);
 
-    if (ESP_OK == si4713_powerup_analog(dev_handle))
+    if (ESP_OK == si4713_powerup_analog(dev_handle, POWER_UP_DEFAULT_VAL))
     {
         ESP_LOGI(SI4713_TAG, "Si4713 initialized successfully");
     }
@@ -273,6 +275,20 @@ static inline void configure_si4713(i2c_master_dev_handle_t dev_handle)
     si4713_set_property(dev_handle, TX_PILOT_FREQUENCY, TX_PILOT_FREQUENCY_DEFAULT_VAL);
     si4713_set_property(dev_handle, TX_AUDIO_DEVIATION, TX_AUDIO_DEVIATION_DEFAULT_VAL);
     si4713_set_property(dev_handle, TX_PILOT_DEVIATION, TX_PILOT_DEVIATION_DEFAULT_VAL);
+}
+
+static inline void tune_si4713(i2c_master_dev_handle_t dev_handle)
+{
+    uint8_t status_expected;
+
+    si4713_tx_tune_power(dev_handle, TX_TUNE_POWER_DEFAULT_VAL);
+    status_expected = (uint8_t)((1U << STATUS_CTS_BIT_POS) | (1U << STATUS_STCINT_BIT_POS));
+    si4713_get_int_status(dev_handle, status_expected, T_STC_SHORT_MS);
+    si4713_tx_tune_freq(dev_handle, TX_TUNE_FREQ_DEFAULT_VAL);
+    status_expected = (uint8_t)((1U << STATUS_CTS_BIT_POS) | (1U << STATUS_STCINT_BIT_POS));
+    si4713_get_int_status(dev_handle, status_expected, T_STC_LONG_MS);
+    si4713_tx_tune_status(dev_handle);
+    si4713_set_property(dev_handle, TX_COMPONENT_ENABLE, TX_COMPONENT_ENABLE_DEFAULT_VAL);
 }
 
 void app_main(void)
@@ -361,4 +377,5 @@ void app_main(void)
 
     powerup_si4713(dev_handle);
     configure_si4713(dev_handle);
+    tune_si4713(dev_handle);
 }

@@ -47,14 +47,18 @@ typedef enum
 } si4713_command_t;
 
 /* Structure of Si4713 status response */
-typedef struct
+typedef union
 {
-    uint8_t stcint : 1; /* Seek/Tune Complete Interrupt. 0 = Tune complete has not been triggered. 1 = Tune complete has been triggered. */
-    uint8_t asqint : 1; /* Signal Quality Interrupt. 0 = Signal quality measurement has not been triggered. 1 = Signal quality measurement has been triggered. */
-    uint8_t rdsint : 1; /* RDS Interrupt. 0 = RDS interrupt has not been triggered. 1 = RDS interrupt has been triggered. */
-    uint8_t : 3;        /* Reserved */
-    uint8_t err : 1;    /* Error. 0 = No error, 1 = Error */
-    uint8_t cts : 1;    /* Clear to Send. 0 = Wait before sending next command. 1 = Clear to send next command */
+    struct
+    {
+        uint8_t stcint : 1; /* Seek/Tune Complete Interrupt. 0 = Tune complete has not been triggered. 1 = Tune complete has been triggered. */
+        uint8_t asqint : 1; /* Signal Quality Interrupt. 0 = Signal quality measurement has not been triggered. 1 = Signal quality measurement has been triggered. */
+        uint8_t rdsint : 1; /* RDS Interrupt. 0 = RDS interrupt has not been triggered. 1 = RDS interrupt has been triggered. */
+        uint8_t : 3;        /* Reserved */
+        uint8_t err : 1;    /* Error. 0 = No error, 1 = Error */
+        uint8_t cts : 1;    /* Clear to Send. 0 = Wait before sending next command. 1 = Clear to send next command */
+    };
+    uint8_t val;
 } si4713_status_response_t;
 
 /*==================================================================
@@ -65,7 +69,7 @@ typedef struct
     Local function declarations
 ===================================================================*/
 
-static void si4713_read_status(i2c_master_dev_handle_t dev_handle, si4713_status_response_t *status_ptr, uint32_t timeout_ms);
+static void si4713_read_status(i2c_master_dev_handle_t dev_handle, si4713_status_response_t *status_ptr, si4713_status_response_t status_expected, uint32_t timeout_ms);
 static void si4713_read_response(i2c_master_dev_handle_t dev_handle, uint8_t *resp_ptr, uint8_t resp_len);
 static inline void si4713_send_cmd(i2c_master_dev_handle_t dev_handle, uint8_t cmd, const uint8_t *args, uint8_t arg_cnt);
 
@@ -77,17 +81,17 @@ static inline void si4713_send_cmd(i2c_master_dev_handle_t dev_handle, uint8_t c
  * @brief Read status value from Si4713.
  *
  * @param[in] dev_handle I2C master device handle.
- * @param[out] status_ptr status variable pointer.
- * @param[in] timeout_ms Timeout for valid status response reception in ms.
+ * @param[out] status_ptr Status variable pointer.
+ * @param[in] timeout_ms Timeout for CTS bit setting in ms.
  */
-static void si4713_read_status(i2c_master_dev_handle_t dev_handle, si4713_status_response_t *status_ptr, uint32_t timeout_ms)
+static void si4713_read_status(i2c_master_dev_handle_t dev_handle, si4713_status_response_t *status_ptr, si4713_status_response_t status_expected, uint32_t timeout_ms)
 {
     uint32_t start = xTaskGetTickCount();
     uint32_t timeout = pdMS_TO_TICKS(timeout_ms);
     do
     {
         ESP_ERROR_CHECK(i2c_read_response(dev_handle, (uint8_t *)status_ptr, 1));
-    } while ((0U == status_ptr->cts) && ((xTaskGetTickCount() - start) < timeout));
+    } while ((status_expected.val != status_ptr->val) && ((xTaskGetTickCount() - start) < timeout));
 }
 
 /**
@@ -121,27 +125,29 @@ static inline void si4713_send_cmd(i2c_master_dev_handle_t dev_handle, uint8_t c
  * This function sends Powerup in Analog Mode command to Si4713 and checks the response status.
  *
  * @param[in] dev_handle I2C master device handle.
+ * @param[in] val Powerup argument values.
  * @return
- *      - ESP_OK: Powerup succesful.
- *      - ESP_FAIL: Powerup failed.
+ *      - ESP_OK: Powerup command successful.
+ *      - ESP_FAIL: Powerup command failed.
  */
-esp_err_t si4713_powerup_analog(i2c_master_dev_handle_t dev_handle)
+esp_err_t si4713_powerup_analog(i2c_master_dev_handle_t dev_handle, uint16_t val)
 {
     esp_err_t ret_val = ESP_FAIL;
 
-    /*  0xC2 -> Set to FM Transmit. Enable interrupts.
-        0x50 -> Set to Analog Line Input */
-    uint8_t args[2] = {0xC2U, 0x50U};
+    uint8_t args[2];
+    args[0] = (val >> 8U) & 0xFFU;
+    args[1] = val & 0xFFU;
     si4713_send_cmd(dev_handle, POWER_UP, args, sizeof(args));
 
     si4713_status_response_t status;
-    si4713_read_status(dev_handle, &status, T_CTS_LONG_MS);
+    const si4713_status_response_t status_expected = {.cts = 1U};
+    si4713_read_status(dev_handle, &status, status_expected, T_CTS_LONG_MS);
 
-    if (1U == status.cts)
+    if ((0U == status.err) && (1U == status.cts))
     {
         ret_val = ESP_OK;
     }
-    ESP_LOGI(SI4713_TAG, "SI4713 powerup status = 0x%X", status);
+    ESP_LOGI(SI4713_TAG, "POWER_UP status = 0x%X", status);
 
     return ret_val;
 }
@@ -151,12 +157,12 @@ esp_err_t si4713_powerup_analog(i2c_master_dev_handle_t dev_handle)
  *
  * @param[in] dev_handle I2C master device handle.
  * @param[in] property Si4713 property.
- * @param[in] property_val Si4713 property value.
+ * @param[in] val Si4713 property value.
  * @return
- *      - ESP_OK: Set Property succesful.
- *      - ESP_FAIL: Set Property failed.
+ *      - ESP_OK: Set Property command successful.
+ *      - ESP_FAIL: Set Property command failed.
  */
-esp_err_t si4713_set_property(i2c_master_dev_handle_t dev_handle, si4713_property_t property, uint16_t property_val)
+esp_err_t si4713_set_property(i2c_master_dev_handle_t dev_handle, si4713_property_t property, uint16_t val)
 {
     esp_err_t ret_val = ESP_FAIL;
 
@@ -164,17 +170,23 @@ esp_err_t si4713_set_property(i2c_master_dev_handle_t dev_handle, si4713_propert
     args[0] = 0x00U;
     args[1] = ((uint16_t)property >> 8U) & 0xFFU;
     args[2] = (uint16_t)property & 0xFFU;
-    args[3] = (property_val >> 8U) & 0xFFU;
-    args[4] = property_val & 0xFFU;
+    args[3] = (val >> 8U) & 0xFFU;
+    args[4] = val & 0xFFU;
     si4713_send_cmd(dev_handle, SET_PROPERTY, args, sizeof(args));
 
     si4713_status_response_t status;
-    si4713_read_status(dev_handle, &status, T_CTS_SHORT_MS);
-    if (1U == status.cts)
+    const si4713_status_response_t status_expected = {.cts = 1U};
+    si4713_read_status(dev_handle, &status, status_expected, T_CTS_SHORT_MS);
+
+    if (status.val == status_expected.val)
     {
         ret_val = ESP_OK;
+        ESP_LOGI(SI4713_TAG, "SET_PROPERTY 0x%X status = 0x%X", property, status);
     }
-    ESP_LOGI(SI4713_TAG, "SI4713 set property 0x%X status = 0x%X", property, status);
+    else
+    {
+        ESP_LOGE(SI4713_TAG, "SET_PROPERTY 0x%X status = 0x%X", property, status);
+    }
 
     return ret_val;
 }
@@ -186,8 +198,8 @@ esp_err_t si4713_set_property(i2c_master_dev_handle_t dev_handle, si4713_propert
  *
  * @param[in] dev_handle I2C master device handle.
  * @return
- *      - ESP_OK: Info reading succesful.
- *      - ESP_FAIL: Info reading failed.
+ *      - ESP_OK: Get revision command successful.
+ *      - ESP_FAIL: Get revision command failed.
  */
 esp_err_t si4713_get_rev(i2c_master_dev_handle_t dev_handle)
 {
@@ -197,10 +209,17 @@ esp_err_t si4713_get_rev(i2c_master_dev_handle_t dev_handle)
     si4713_send_cmd(dev_handle, GET_REV, &arg, sizeof(arg));
 
     si4713_status_response_t status;
-    si4713_read_status(dev_handle, &status, T_CTS_SHORT_MS);
-    if (1U == status.cts)
+    const si4713_status_response_t status_expected = {.cts = 1U};
+    si4713_read_status(dev_handle, &status, status_expected, T_CTS_SHORT_MS);
+
+    if (status.val == status_expected.val)
     {
         ret_val = ESP_OK;
+        ESP_LOGI(SI4713_TAG, "GET_REV status = 0x%X", status);
+    }
+    else
+    {
+        ESP_LOGE(SI4713_TAG, "GET_REV status = 0x%X", status);
     }
 
     if (ESP_OK == ret_val)
@@ -208,15 +227,169 @@ esp_err_t si4713_get_rev(i2c_master_dev_handle_t dev_handle)
         uint8_t response[9];
         si4713_read_response(dev_handle, response, sizeof(response));
 
-        ESP_LOGI(SI4713_TAG, "SI4713 part number = 0x%X", response[1]);                                              // (0x0D = Si4713)
-        ESP_LOGI(SI4713_TAG, "SI4713 firmware revision = v%.2d.%.2d", (response[2] - 0x30U), (response[3] - 0x30U)); // in ASCII 0x30 = 0
-        ESP_LOGI(SI4713_TAG, "SI4713 patch id = 0x%X", ((response[4] << 8U) & 0xFF00U) | (response[5] & 0xFFU));
-        ESP_LOGI(SI4713_TAG, "SI4713 component firmware revision = v%.2d.%.2d", (response[6] - 0x30U), (response[7] - 0x30U));
-        ESP_LOGI(SI4713_TAG, "SI4713 chip revision = rev%c", response[8]);
+        ESP_LOGI(SI4713_TAG, "part number = 0x%X", response[1]);                                              // (0x0D = Si4713)
+        ESP_LOGI(SI4713_TAG, "firmware revision = v%.2d.%.2d", (response[2] - 0x30U), (response[3] - 0x30U)); // in ASCII 0x30 = 0
+        ESP_LOGI(SI4713_TAG, "patch id = 0x%X", ((response[4] << 8U) & 0xFF00U) | (response[5] & 0xFFU));
+        ESP_LOGI(SI4713_TAG, "component firmware revision = v%.2d.%.2d", (response[6] - 0x30U), (response[7] - 0x30U));
+        ESP_LOGI(SI4713_TAG, "chip revision = rev%c", response[8]);
     }
     else
     {
-        ESP_LOGE(SI4713_TAG, "SI4713 CTS timeout expired");
+        ESP_LOGE(SI4713_TAG, "CTS timeout expired");
+    }
+
+    return ret_val;
+}
+
+/**
+ * @brief Set TX tune power of Si4713.
+ *
+ * @param[in] dev_handle I2C master device handle.
+ * @param[in] val Tune power byte (MSB), antenna tuning capacitor (LSB).
+ * @return
+ *      - ESP_OK: TX Tune Power command successful.
+ *      - ESP_FAIL: TX Tune Power command failed.
+ */
+esp_err_t si4713_tx_tune_power(i2c_master_dev_handle_t dev_handle, uint16_t val)
+{
+    esp_err_t ret_val = ESP_FAIL;
+
+    uint8_t args[4];
+    args[0] = 0x00U;
+    args[1] = 0x00U;
+    args[2] = (val >> 8U) & 0xFFU;
+    args[3] = val & 0xFFU;
+    si4713_send_cmd(dev_handle, TX_TUNE_POWER, args, sizeof(args));
+
+    si4713_status_response_t status;
+    const si4713_status_response_t status_expected = {.cts = 1U};
+    si4713_read_status(dev_handle, &status, status_expected, T_CTS_SHORT_MS);
+
+    if (status.val == status_expected.val)
+    {
+        ret_val = ESP_OK;
+        ESP_LOGI(SI4713_TAG, "TX_TUNE_POWER status = 0x%X", status);
+    }
+    else
+    {
+        ESP_LOGE(SI4713_TAG, "TX_TUNE_POWER status = 0x%X", status);
+    }
+
+    return ret_val;
+}
+
+/**
+ * @brief Set TX tune frequency of Si4713.
+ *
+ * @param[in] dev_handle I2C master device handle.
+ * @param[in] val Tune frequency in 10 kHz units.
+ * @return
+ *      - ESP_OK: TX Tune Frequency command successful.
+ *      - ESP_FAIL: TX Tune Frequency command failed.
+ */
+esp_err_t si4713_tx_tune_freq(i2c_master_dev_handle_t dev_handle, uint16_t val)
+{
+    esp_err_t ret_val = ESP_FAIL;
+
+    uint8_t args[3];
+    args[0] = 0x00U;
+    args[1] = (val >> 8U) & 0xFFU;
+    args[2] = val & 0xFFU;
+    si4713_send_cmd(dev_handle, TX_TUNE_FREQ, args, sizeof(args));
+
+    si4713_status_response_t status;
+    const si4713_status_response_t status_expected = {.cts = 1U};
+    si4713_read_status(dev_handle, &status, status_expected, T_CTS_SHORT_MS);
+
+    if (status.val == status_expected.val)
+    {
+        ret_val = ESP_OK;
+        ESP_LOGI(SI4713_TAG, "TX_TUNE_FREQUENCY status = 0x%X", status);
+    }
+    else
+    {
+        ESP_LOGE(SI4713_TAG, "TX_TUNE_FREQUENCY status = 0x%X", status);
+    }
+
+    return ret_val;
+}
+
+/**
+ * @brief Update status byte of Si4713.
+ *
+ * @note This command should be called after any command that sets the STCINT, ASQINT, or RDSINT bits.
+ *
+ * @param[in] dev_handle I2C master device handle.
+ * @param[in] status_expected Expected reply status value.
+ * @param[in] timeout Correct status timeout.
+ * @return
+ *      - ESP_OK: Get Int Status command successful.
+ *      - ESP_FAIL: Get Int Status command failed.
+ */
+esp_err_t si4713_get_int_status(i2c_master_dev_handle_t dev_handle, uint8_t status_expected, uint32_t timeout)
+{
+    esp_err_t ret_val = ESP_FAIL;
+
+    si4713_send_cmd(dev_handle, GET_INT_STATUS, NULL, 0U);
+
+    si4713_status_response_t status;
+    si4713_read_status(dev_handle, &status, (si4713_status_response_t)status_expected, timeout);
+
+    if (status.val == status_expected)
+    {
+        ret_val = ESP_OK;
+        ESP_LOGI(SI4713_TAG, "GET_INT_STATUS status = 0x%X", status);
+    }
+    else
+    {
+        ESP_LOGE(SI4713_TAG, "GET_INT_STATUS status = 0x%X", status);
+    }
+
+    return ret_val;
+}
+
+/**
+ * @brief Get TX tune status of Si4713.
+ *
+ * @param[in] dev_handle I2C master device handle.
+ * @return
+ *      - ESP_OK: TX Tune Status command successful.
+ *      - ESP_FAIL: TX Tune Status command failed.
+ */
+esp_err_t si4713_tx_tune_status(i2c_master_dev_handle_t dev_handle)
+{
+    esp_err_t ret_val = ESP_FAIL;
+
+    uint8_t arg = 0x01U; // clear STC interrupt
+    si4713_send_cmd(dev_handle, TX_TUNE_STATUS, &arg, sizeof(arg));
+
+    si4713_status_response_t status;
+    const si4713_status_response_t status_expected = {.cts = 1U};
+    si4713_read_status(dev_handle, &status, status_expected, T_CTS_SHORT_MS);
+
+    if (status.val == status_expected.val)
+    {
+        ret_val = ESP_OK;
+        ESP_LOGI(SI4713_TAG, "TX_TUNE_STATUS status = 0x%X", status);
+    }
+    else
+    {
+        ESP_LOGE(SI4713_TAG, "TX_TUNE_STATUS status = 0x%X", status);
+    }
+
+    if (ESP_OK == ret_val)
+    {
+        uint8_t response[8];
+        si4713_read_response(dev_handle, response, sizeof(response));
+
+        ESP_LOGI(SI4713_TAG, "read frequency = 0x%X", ((response[2] << 8U) & 0xFF00U) | (response[3] & 0xFFU));
+        ESP_LOGI(SI4713_TAG, "read transmit voltage = 0x%X", response[5]);
+        ESP_LOGI(SI4713_TAG, "read antenna tuning capacitor = 0x%X", response[6]);
+        ESP_LOGI(SI4713_TAG, "read received noise level = 0x%X", response[7]);
+    }
+    else
+    {
+        ESP_LOGE(SI4713_TAG, "STC timeout expired");
     }
 
     return ret_val;
