@@ -185,7 +185,7 @@ esp_err_t si4713_set_property(i2c_master_dev_handle_t dev_handle, si4713_propert
     }
     else
     {
-        ESP_LOGE(SI4713_TAG, "SET_PROPERTY 0x%X status = 0x%X", property, status);
+        ESP_LOGE(SI4713_TAG, "SET_PROPERTY 0x%X status = 0x%X (expected: 0x%X)", property, status, status_expected);
     }
 
     return ret_val;
@@ -219,7 +219,7 @@ esp_err_t si4713_get_rev(i2c_master_dev_handle_t dev_handle)
     }
     else
     {
-        ESP_LOGE(SI4713_TAG, "GET_REV status = 0x%X", status);
+        ESP_LOGE(SI4713_TAG, "GET_REV status = 0x%X (expected: 0x%X)", status, status_expected);
     }
 
     if (ESP_OK == ret_val)
@@ -272,7 +272,7 @@ esp_err_t si4713_tx_tune_power(i2c_master_dev_handle_t dev_handle, uint16_t val)
     }
     else
     {
-        ESP_LOGE(SI4713_TAG, "TX_TUNE_POWER status = 0x%X", status);
+        ESP_LOGE(SI4713_TAG, "TX_TUNE_POWER status = 0x%X (expected: 0x%X)", status, status_expected);
     }
 
     return ret_val;
@@ -308,7 +308,7 @@ esp_err_t si4713_tx_tune_freq(i2c_master_dev_handle_t dev_handle, uint16_t val)
     }
     else
     {
-        ESP_LOGE(SI4713_TAG, "TX_TUNE_FREQUENCY status = 0x%X", status);
+        ESP_LOGE(SI4713_TAG, "TX_TUNE_FREQUENCY status = 0x%X (expected: 0x%X)", status, status_expected);
     }
 
     return ret_val;
@@ -342,7 +342,7 @@ esp_err_t si4713_get_int_status(i2c_master_dev_handle_t dev_handle, uint8_t stat
     }
     else
     {
-        ESP_LOGE(SI4713_TAG, "GET_INT_STATUS status = 0x%X", status);
+        ESP_LOGE(SI4713_TAG, "GET_INT_STATUS status = 0x%X (expected: 0x%X)", status, status_expected);
     }
 
     return ret_val;
@@ -374,7 +374,7 @@ esp_err_t si4713_tx_tune_status(i2c_master_dev_handle_t dev_handle)
     }
     else
     {
-        ESP_LOGE(SI4713_TAG, "TX_TUNE_STATUS status = 0x%X", status);
+        ESP_LOGE(SI4713_TAG, "TX_TUNE_STATUS status = 0x%X (expected: 0x%X)", status, status_expected);
     }
 
     if (ESP_OK == ret_val)
@@ -383,13 +383,61 @@ esp_err_t si4713_tx_tune_status(i2c_master_dev_handle_t dev_handle)
         si4713_read_response(dev_handle, response, sizeof(response));
 
         ESP_LOGI(SI4713_TAG, "read frequency = 0x%X", ((response[2] << 8U) & 0xFF00U) | (response[3] & 0xFFU));
-        ESP_LOGI(SI4713_TAG, "read transmit voltage = 0x%X", response[5]);
+        ESP_LOGI(SI4713_TAG, "read transmit voltage = 0x%X", ((response[4] << 8U) & 0xFF00U) | (response[5] & 0xFFU));
         ESP_LOGI(SI4713_TAG, "read antenna tuning capacitor = 0x%X", response[6]);
         ESP_LOGI(SI4713_TAG, "read received noise level = 0x%X", response[7]);
     }
     else
     {
-        ESP_LOGE(SI4713_TAG, "STC timeout expired");
+        ESP_LOGE(SI4713_TAG, "CTS timeout expired");
+    }
+
+    return ret_val;
+}
+
+/**
+ * @brief Get audio signal quality and current FM transmit frequency.
+ *
+ * @param[in] dev_handle I2C master device handle.
+ * @return
+ *      - ESP_OK: TX ASQ Status command successful.
+ *      - ESP_FAIL: TX ASQ Status command failed.
+ */
+esp_err_t si4713_tx_asq_status(i2c_master_dev_handle_t dev_handle)
+{
+    esp_err_t ret_val = ESP_FAIL;
+
+    uint8_t arg = 0x01U; // clear ASQINT bit
+    si4713_send_cmd(dev_handle, TX_ASQ_STATUS, &arg, sizeof(arg));
+
+    si4713_status_response_t status;
+    const si4713_status_response_t status_expected = {.cts = 1U};
+    si4713_read_status(dev_handle, &status, status_expected, T_CTS_SHORT_MS);
+
+    if (status.val == status_expected.val)
+    {
+        ret_val = ESP_OK;
+        ESP_LOGI(SI4713_TAG, "TX_ASQ_STATUS status = 0x%X", status);
+    }
+    else
+    {
+        ESP_LOGE(SI4713_TAG, "TX_ASQ_STATUS status = 0x%X (expected: 0x%X)", status, status_expected);
+    }
+
+    if (ESP_OK == ret_val)
+    {
+        uint8_t response[5];
+        si4713_read_response(dev_handle, response, sizeof(response));
+
+        ESP_LOGI(SI4713_TAG, "overmodulation detection = %d", response[1] & 0x4U);
+        ESP_LOGI(SI4713_TAG, "input audio level threshold detect high = %d", response[1] & 0x2U);
+        ESP_LOGI(SI4713_TAG, "input audio level threshold detect low = %d", response[1] & 0x1U);
+        ESP_LOGI(SI4713_TAG, "read frequency = 0x%X", ((response[2] << 8U) & 0xFF00U) | (response[3] & 0xFFU));
+        ESP_LOGI(SI4713_TAG, "input audio level in dBfs = %d", response[4]);
+    }
+    else
+    {
+        ESP_LOGE(SI4713_TAG, "CTS timeout expired");
     }
 
     return ret_val;

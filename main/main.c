@@ -77,6 +77,8 @@ static inline void configure_si4713(i2c_master_dev_handle_t dev_handle);
 static inline void powerup_si4713(i2c_master_dev_handle_t dev_handle);
 /* Si4713 tuning function */
 static inline void tune_si4713(i2c_master_dev_handle_t dev_handle);
+/* Si4713 audio dynamic range control function */
+static inline void audio_dynamic_range_control_si4713(i2c_master_dev_handle_t dev_handle);
 
 /*==================================================================
     Function definitions
@@ -284,11 +286,32 @@ static inline void tune_si4713(i2c_master_dev_handle_t dev_handle)
     si4713_tx_tune_power(dev_handle, TX_TUNE_POWER_DEFAULT_VAL);
     status_expected = (uint8_t)((1U << STATUS_CTS_BIT_POS) | (1U << STATUS_STCINT_BIT_POS));
     si4713_get_int_status(dev_handle, status_expected, T_STC_SHORT_MS);
+    si4713_tx_tune_status(dev_handle); // to clean the STCINT bit
     si4713_tx_tune_freq(dev_handle, TX_TUNE_FREQ_DEFAULT_VAL);
     status_expected = (uint8_t)((1U << STATUS_CTS_BIT_POS) | (1U << STATUS_STCINT_BIT_POS));
     si4713_get_int_status(dev_handle, status_expected, T_STC_LONG_MS);
-    si4713_tx_tune_status(dev_handle);
+    si4713_tx_tune_status(dev_handle); // to clean the STCINT bit
     si4713_set_property(dev_handle, TX_COMPONENT_ENABLE, TX_COMPONENT_ENABLE_DEFAULT_VAL);
+}
+
+static inline void audio_dynamic_range_control_si4713(i2c_master_dev_handle_t dev_handle)
+{
+    uint8_t status_expected;
+
+    si4713_set_property(dev_handle, TX_ACOMP_THRESHOLD, TX_ACOMP_THRESHOLD_DEFAULT_VAL);
+    si4713_set_property(dev_handle, TX_ACOMP_GAIN, TX_ACOMP_GAIN_DEFAULT_VAL);
+    si4713_set_property(dev_handle, TX_ACOMP_RELEASE_TIME, TX_ACOMP_RELEASE_TIME_DEFAULT_VAL);
+    si4713_set_property(dev_handle, TX_ACOMP_ATTACK_TIME, TX_ACOMP_ATTACK_TIME_DEFAULT_VAL);
+    si4713_set_property(dev_handle, TX_ACOMP_ENABLE, TX_ACOMP_ENABLE_DEFAULT_VAL);
+    si4713_set_property(dev_handle, TX_LIMITER_RELEASE_TIME, TX_LIMITER_RELEASE_TIME_DEFAULT_VAL);
+    si4713_set_property(dev_handle, TX_ASQ_LEVEL_LOW, TX_ASQ_LEVEL_LOW_DEFAULT_VAL);
+    si4713_set_property(dev_handle, TX_ASQ_DURATION_LOW, TX_ASQ_DURATION_LOW_DEFAULT_VAL);
+    si4713_set_property(dev_handle, TX_ASQ_LEVEL_HIGH, TX_ASQ_LEVEL_HIGH_DEFAULT_VAL);
+    si4713_set_property(dev_handle, TX_ASQ_DURATION_HIGH, TX_ASQ_DURATION_HIGH_DEFAULT_VAL);
+    si4713_set_property(dev_handle, TX_ASQ_INTERRUPT_SOURCE, TX_ASQ_INTERRUPT_SOURCE_DEFAULT_VAL);
+    status_expected = (uint8_t)((1U << STATUS_CTS_BIT_POS) | (1U << STATUS_ASQINT_BIT_POS));
+    si4713_get_int_status(dev_handle, status_expected, 1U);
+    si4713_tx_asq_status(dev_handle);
 }
 
 void app_main(void)
@@ -378,4 +401,5 @@ void app_main(void)
     powerup_si4713(dev_handle);
     configure_si4713(dev_handle);
     tune_si4713(dev_handle);
+    audio_dynamic_range_control_si4713(dev_handle);
 }

@@ -77,5 +77,6 @@ esp_err_t si4713_tx_tune_power(i2c_master_dev_handle_t dev_handle, uint16_t val)
 esp_err_t si4713_tx_tune_freq(i2c_master_dev_handle_t dev_handle, uint16_t val);
 esp_err_t si4713_get_int_status(i2c_master_dev_handle_t dev_handle, uint8_t status_expected, uint32_t timeout);
 esp_err_t si4713_tx_tune_status(i2c_master_dev_handle_t dev_handle);
+esp_err_t si4713_tx_asq_status(i2c_master_dev_handle_t dev_handle);
 
 #endif /* __SI4713_H__ */
