@@ -42,6 +42,16 @@
     Function-like macros
 ===================================================================*/
 
+#define WAIT_MS(time)                                   \
+    do                                                  \
+    {                                                   \
+        TickType_t start = xTaskGetTickCount();         \
+        TickType_t timeout = pdMS_TO_TICKS((time));     \
+        while (xTaskGetTickCount() < (start + timeout)) \
+        {                                               \
+        }                                               \
+    } while (0)
+
 /*==================================================================
     Local types
 ===================================================================*/
@@ -252,8 +262,13 @@ static void bt_av_hdl_stack_evt(uint16_t event, void *p_param)
 
 static inline void powerup_si4713(i2c_master_dev_handle_t dev_handle)
 {
+    /* put si4713 in reset */
+    gpio_set_level(GPIO_OUTPUT_SI4713_RST, 0U);
+    WAIT_MS(10);
+
     /* release si4713 from reset */
     gpio_set_level(GPIO_OUTPUT_SI4713_RST, 1U);
+    WAIT_MS(10);
 
     if (ESP_OK == si4713_powerup_analog(dev_handle, POWER_UP_DEFAULT_VAL))
     {
@@ -270,8 +285,6 @@ static inline void configure_si4713(i2c_master_dev_handle_t dev_handle)
 {
     si4713_get_rev(dev_handle);
     si4713_set_property(dev_handle, GPO_IEN, GPO_IEN_DEFAULT_VAL);
-    si4713_set_property(dev_handle, REFCLK_FREQ, REFCLK_FREQ_DEFAULT_VAL);
-    si4713_set_property(dev_handle, REFCLK_PRESCALE, REFCLK_PRESCALE_DEFAULT_VAL);
     si4713_set_property(dev_handle, TX_LINE_INPUT_MUTE, TX_LINE_INPUT_MUTE_DEFAULT_VAL);
     si4713_set_property(dev_handle, TX_PREEMPHASIS, TX_PREEMPHASIS_DEFAULT_VAL);
     si4713_set_property(dev_handle, TX_PILOT_FREQUENCY, TX_PILOT_FREQUENCY_DEFAULT_VAL);
@@ -311,7 +324,7 @@ static inline void audio_dynamic_range_control_si4713(i2c_master_dev_handle_t de
     si4713_set_property(dev_handle, TX_ASQ_INTERRUPT_SOURCE, TX_ASQ_INTERRUPT_SOURCE_DEFAULT_VAL);
     status_expected = (uint8_t)((1U << STATUS_CTS_BIT_POS) | (1U << STATUS_ASQINT_BIT_POS));
     si4713_get_int_status(dev_handle, status_expected, 1U);
-    si4713_tx_asq_status(dev_handle);
+    si4713_tx_asq_status(dev_handle); // to clean the ASQINT bit
 }
 
 void app_main(void)

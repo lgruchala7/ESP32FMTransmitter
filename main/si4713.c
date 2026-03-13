@@ -13,12 +13,22 @@
 #include "freertos/FreeRTOS.h"
 
 /*==================================================================
-Object-like macros
+    Object-like macros
 ===================================================================*/
 
 /*==================================================================
-Function-like macros
+    Function-like macros
 ===================================================================*/
+
+#define WAIT_MS(time)                                   \
+    do                                                  \
+    {                                                   \
+        TickType_t start = xTaskGetTickCount();         \
+        TickType_t timeout = pdMS_TO_TICKS((time));     \
+        while (xTaskGetTickCount() < (start + timeout)) \
+        {                                               \
+        }                                               \
+    } while (0)
 
 /*==================================================================
     Local types
@@ -42,8 +52,8 @@ typedef enum
     TX_ASQ_STATUS = 0x34,   /* Queries the TX status and input audio signal metrics. */
     TX_RDS_BUFF = 0x35,     /* Si4713 Only. Queries the status of the RDS Group Buffer and loads new data into buffer. */
     TX_RDS_PS = 0x36,       /* Si4713 Only. Set up default PS strings. */
-    GPO_CTL = 0x80,         /* Configures GPO3 as output or Hi-Z. */
-    GPO_SET = 0x81,         /* Sets GPO3 output level (low or high) */
+    GPO_CTL = 0x80,         /* Configures GPO1, 2, and 3 as output or Hi-Z. */
+    GPO_SET = 0x81,         /* Sets GPO1, 2, and 3 output level (low or high). */
 } si4713_command_t;
 
 /* Structure of Si4713 status response */
@@ -86,8 +96,8 @@ static inline void si4713_send_cmd(i2c_master_dev_handle_t dev_handle, uint8_t c
  */
 static void si4713_read_status(i2c_master_dev_handle_t dev_handle, si4713_status_response_t *status_ptr, si4713_status_response_t status_expected, uint32_t timeout_ms)
 {
-    uint32_t start = xTaskGetTickCount();
-    uint32_t timeout = pdMS_TO_TICKS(timeout_ms);
+    TickType_t start = xTaskGetTickCount();
+    TickType_t timeout = pdMS_TO_TICKS(timeout_ms);
     do
     {
         ESP_ERROR_CHECK(i2c_read_response(dev_handle, (uint8_t *)status_ptr, 1));
@@ -185,7 +195,7 @@ esp_err_t si4713_set_property(i2c_master_dev_handle_t dev_handle, si4713_propert
     }
     else
     {
-        ESP_LOGE(SI4713_TAG, "SET_PROPERTY 0x%X status = 0x%X (expected: 0x%X)", property, status, status_expected);
+        ESP_LOGE(SI4713_TAG, "SET_PROPERTY 0x%X status = 0x%X (expected: 0x%X)", property, status, status_expected.val);
     }
 
     return ret_val;
@@ -219,7 +229,7 @@ esp_err_t si4713_get_rev(i2c_master_dev_handle_t dev_handle)
     }
     else
     {
-        ESP_LOGE(SI4713_TAG, "GET_REV status = 0x%X (expected: 0x%X)", status, status_expected);
+        ESP_LOGE(SI4713_TAG, "GET_REV status = 0x%X (expected: 0x%X)", status, status_expected.val);
     }
 
     if (ESP_OK == ret_val)
@@ -227,11 +237,11 @@ esp_err_t si4713_get_rev(i2c_master_dev_handle_t dev_handle)
         uint8_t response[9];
         si4713_read_response(dev_handle, response, sizeof(response));
 
-        ESP_LOGI(SI4713_TAG, "part number = 0x%X", response[1]);                                              // (0x0D = Si4713)
-        ESP_LOGI(SI4713_TAG, "firmware revision = v%.2d.%.2d", (response[2] - 0x30U), (response[3] - 0x30U)); // in ASCII 0x30 = 0
-        ESP_LOGI(SI4713_TAG, "patch id = 0x%X", ((response[4] << 8U) & 0xFF00U) | (response[5] & 0xFFU));
-        ESP_LOGI(SI4713_TAG, "component firmware revision = v%.2d.%.2d", (response[6] - 0x30U), (response[7] - 0x30U));
-        ESP_LOGI(SI4713_TAG, "chip revision = rev%c", response[8]);
+        ESP_LOGI(SI4713_TAG, "\tpart number = 0x%X", response[1]);                                              // (0x0D = Si4713)
+        ESP_LOGI(SI4713_TAG, "\tfirmware revision = v%.2d.%.2d", (response[2] - 0x30U), (response[3] - 0x30U)); // in ASCII 0x30 = 0
+        ESP_LOGI(SI4713_TAG, "\tpatch id = 0x%X", ((response[4] << 8U) & 0xFF00U) | (response[5] & 0xFFU));
+        ESP_LOGI(SI4713_TAG, "\tcomponent firmware revision = v%.2d.%.2d", (response[6] - 0x30U), (response[7] - 0x30U));
+        ESP_LOGI(SI4713_TAG, "\tchip revision = rev%c", response[8]);
     }
     else
     {
@@ -272,7 +282,7 @@ esp_err_t si4713_tx_tune_power(i2c_master_dev_handle_t dev_handle, uint16_t val)
     }
     else
     {
-        ESP_LOGE(SI4713_TAG, "TX_TUNE_POWER status = 0x%X (expected: 0x%X)", status, status_expected);
+        ESP_LOGE(SI4713_TAG, "TX_TUNE_POWER status = 0x%X (expected: 0x%X)", status, status_expected.val);
     }
 
     return ret_val;
@@ -308,7 +318,7 @@ esp_err_t si4713_tx_tune_freq(i2c_master_dev_handle_t dev_handle, uint16_t val)
     }
     else
     {
-        ESP_LOGE(SI4713_TAG, "TX_TUNE_FREQUENCY status = 0x%X (expected: 0x%X)", status, status_expected);
+        ESP_LOGE(SI4713_TAG, "TX_TUNE_FREQUENCY status = 0x%X (expected: 0x%X)", status, status_expected.val);
     }
 
     return ret_val;
@@ -321,28 +331,36 @@ esp_err_t si4713_tx_tune_freq(i2c_master_dev_handle_t dev_handle, uint16_t val)
  *
  * @param[in] dev_handle I2C master device handle.
  * @param[in] status_expected Expected reply status value.
- * @param[in] timeout Correct status timeout.
+ * @param[in] timeout Correct response status timeout.
  * @return
  *      - ESP_OK: Get Int Status command successful.
  *      - ESP_FAIL: Get Int Status command failed.
  */
-esp_err_t si4713_get_int_status(i2c_master_dev_handle_t dev_handle, uint8_t status_expected, uint32_t timeout)
+esp_err_t si4713_get_int_status(i2c_master_dev_handle_t dev_handle, uint8_t status_expected_val, uint32_t timeout_ms)
 {
     esp_err_t ret_val = ESP_FAIL;
-
-    si4713_send_cmd(dev_handle, GET_INT_STATUS, NULL, 0U);
-
     si4713_status_response_t status;
-    si4713_read_status(dev_handle, &status, (si4713_status_response_t)status_expected, timeout);
+    TickType_t start = xTaskGetTickCount();
+    TickType_t timeout = pdMS_TO_TICKS(timeout_ms);
 
-    if (status.val == status_expected)
+    do
+    {
+        si4713_send_cmd(dev_handle, GET_INT_STATUS, NULL, 0U);
+        si4713_read_status(dev_handle, &status, (si4713_status_response_t)status_expected_val, 0U);
+        if (status_expected_val != status.val)
+        {
+            WAIT_MS(10);
+        }
+    } while ((status_expected_val != status.val) && ((xTaskGetTickCount() - start) < timeout));
+
+    if (status.val == status_expected_val)
     {
         ret_val = ESP_OK;
         ESP_LOGI(SI4713_TAG, "GET_INT_STATUS status = 0x%X", status);
     }
     else
     {
-        ESP_LOGE(SI4713_TAG, "GET_INT_STATUS status = 0x%X (expected: 0x%X)", status, status_expected);
+        ESP_LOGE(SI4713_TAG, "GET_INT_STATUS status = 0x%X (expected: 0x%X)", status, status_expected_val);
     }
 
     return ret_val;
@@ -374,7 +392,7 @@ esp_err_t si4713_tx_tune_status(i2c_master_dev_handle_t dev_handle)
     }
     else
     {
-        ESP_LOGE(SI4713_TAG, "TX_TUNE_STATUS status = 0x%X (expected: 0x%X)", status, status_expected);
+        ESP_LOGE(SI4713_TAG, "TX_TUNE_STATUS status = 0x%X (expected: 0x%X)", status, status_expected.val);
     }
 
     if (ESP_OK == ret_val)
@@ -382,10 +400,10 @@ esp_err_t si4713_tx_tune_status(i2c_master_dev_handle_t dev_handle)
         uint8_t response[8];
         si4713_read_response(dev_handle, response, sizeof(response));
 
-        ESP_LOGI(SI4713_TAG, "read frequency = 0x%X", ((response[2] << 8U) & 0xFF00U) | (response[3] & 0xFFU));
-        ESP_LOGI(SI4713_TAG, "read transmit voltage = 0x%X", ((response[4] << 8U) & 0xFF00U) | (response[5] & 0xFFU));
-        ESP_LOGI(SI4713_TAG, "read antenna tuning capacitor = 0x%X", response[6]);
-        ESP_LOGI(SI4713_TAG, "read received noise level = 0x%X", response[7]);
+        ESP_LOGI(SI4713_TAG, "\tread frequency = %u", ((response[2] << 8U) & 0xFF00U) | (response[3] & 0xFFU));
+        ESP_LOGI(SI4713_TAG, "\tread transmit voltage = 0x%X", ((response[4] << 8U) & 0xFF00U) | (response[5] & 0xFFU));
+        ESP_LOGI(SI4713_TAG, "\tread antenna tuning capacitor = 0x%X", response[6]);
+        ESP_LOGI(SI4713_TAG, "\tread received noise level = 0x%X", response[7]);
     }
     else
     {
@@ -421,7 +439,7 @@ esp_err_t si4713_tx_asq_status(i2c_master_dev_handle_t dev_handle)
     }
     else
     {
-        ESP_LOGE(SI4713_TAG, "TX_ASQ_STATUS status = 0x%X (expected: 0x%X)", status, status_expected);
+        ESP_LOGE(SI4713_TAG, "TX_ASQ_STATUS status = 0x%X (expected: 0x%X)", status, status_expected.val);
     }
 
     if (ESP_OK == ret_val)
@@ -429,11 +447,11 @@ esp_err_t si4713_tx_asq_status(i2c_master_dev_handle_t dev_handle)
         uint8_t response[5];
         si4713_read_response(dev_handle, response, sizeof(response));
 
-        ESP_LOGI(SI4713_TAG, "overmodulation detection = %d", response[1] & 0x4U);
-        ESP_LOGI(SI4713_TAG, "input audio level threshold detect high = %d", response[1] & 0x2U);
-        ESP_LOGI(SI4713_TAG, "input audio level threshold detect low = %d", response[1] & 0x1U);
-        ESP_LOGI(SI4713_TAG, "read frequency = 0x%X", ((response[2] << 8U) & 0xFF00U) | (response[3] & 0xFFU));
-        ESP_LOGI(SI4713_TAG, "input audio level in dBfs = %d", response[4]);
+        ESP_LOGI(SI4713_TAG, "\tovermodulation detection = %d", response[1] & 0x4U);
+        ESP_LOGI(SI4713_TAG, "\tinput audio level threshold detect high = %d", response[1] & 0x2U);
+        ESP_LOGI(SI4713_TAG, "\tinput audio level threshold detect low = %d", response[1] & 0x1U);
+        ESP_LOGI(SI4713_TAG, "\tread frequency = %u", ((response[2] << 8U) & 0xFF00U) | (response[3] & 0xFFU));
+        ESP_LOGI(SI4713_TAG, "\tinput audio level in dBfs = %hhd", response[4]);
     }
     else
     {
