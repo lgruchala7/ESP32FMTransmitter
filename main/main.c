@@ -33,6 +33,8 @@
 #include "driver/gpio.h"
 #include "si4713.h"
 #include "si4713_cfg.h"
+#include "sh1106.h"
+#include "sh1106_cfg.h"
 
 /*==================================================================
     Object-like macros
@@ -89,6 +91,8 @@ static inline void powerup_si4713(i2c_master_dev_handle_t dev_handle);
 static inline void tune_si4713(i2c_master_dev_handle_t dev_handle);
 /* Si4713 audio dynamic range control function */
 static inline void audio_dynamic_range_control_si4713(i2c_master_dev_handle_t dev_handle);
+/* SH1106 configuration function */
+static inline void configure_sh1106(i2c_master_dev_handle_t dev_handle);
 
 /*==================================================================
     Function definitions
@@ -327,6 +331,25 @@ static inline void audio_dynamic_range_control_si4713(i2c_master_dev_handle_t de
     si4713_tx_asq_status(dev_handle); // to clean the ASQINT bit
 }
 
+static inline void configure_sh1106(i2c_master_dev_handle_t dev_handle)
+{
+    sh1106_display_off_on(dev_handle, OFF_STATE);
+    sh1106_set_clock_div_ratio_osc_freq(dev_handle, DIV_RATIO(1U), OSC_FREQ_DEFAULT);
+    sh1106_set_multiplex_ratio(dev_handle, MUX_RATIO(64U));
+    sh1106_set_display_offset(dev_handle, DISPLAY_OFFSET(0U));
+    sh1106_set_display_start_line(dev_handle, DISPLAY_START_LINE(0U));
+    sh1106_set_dc_dc_off_on(dev_handle, ON_STATE);
+    sh1106_set_segment_remap(dev_handle, ADC_REVERSE_DIR);
+    sh1106_set_common_output_scan_dir(dev_handle, SCAN_DIR_DESCENDING);
+    sh1106_set_common_pads_hw_config(dev_handle, HW_CONFIG_MODE_ALTERNATIVE);
+    sh1106_set_contrast_ctrl_register(dev_handle, DISPLAY_CONTRAST_VERY_HIGH);
+    sh1106_set_discharge_precharge_period(dev_handle, DISCHARGE_PERIOD_DCLK(1U), PRECHARGE_PERIOD_DCLK(15U));
+    sh1106_set_vcom_deselect_lvl(dev_handle, 100U);
+    sh1106_set_pump_voltage(dev_handle, VPP_9V);
+    sh1106_set_normal_reverse_display(dev_handle, DISPLAY_DATA_NORMAL);
+    sh1106_set_entire_display_off_on(dev_handle, OFF_STATE);
+}
+
 void app_main(void)
 {
     char bda_str[18] = {0};
@@ -340,7 +363,7 @@ void app_main(void)
     ESP_ERROR_CHECK(err);
 
     /*
-     * This example only uses the functions of Classical Bluetooth.
+     * Only functions of Classical Bluetooth are used.
      * So release the controller memory for Bluetooth Low Energy.
      */
     ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_BLE));
@@ -394,10 +417,15 @@ void app_main(void)
     /* bluetooth device name, connection mode and profile set up */
     bt_app_work_dispatch(bt_av_hdl_stack_evt, BT_APP_EVT_STACK_UP, NULL, 0, NULL);
 
+    /* I2C */
     i2c_master_bus_handle_t bus_handle;
-    i2c_master_dev_handle_t dev_handle;
-    i2c_master_init(&bus_handle, &dev_handle, SI4173_SENSOR_ADDR);
+    i2c_init(&bus_handle);
     ESP_LOGI(I2C_MASTER_TAG, "I2C initialized successfully");
+
+    /* Si4713 */
+    i2c_master_dev_handle_t si4713_dev_handle;
+    i2c_add_device(bus_handle, &si4713_dev_handle, SI4173_SENSOR_ADDR);
+    ESP_LOGI(SI4713_TAG, "Si4713 added to I2C bus.");
 
     gpio_config_t rst_pin_config =
         {
@@ -407,12 +435,21 @@ void app_main(void)
             .pull_down_en = GPIO_PULLDOWN_DISABLE,
             .intr_type = GPIO_INTR_DISABLE,
         };
-
     gpio_config(&rst_pin_config);
     ESP_LOGI(SI4713_TAG, "GPIO initialized successfully");
 
-    powerup_si4713(dev_handle);
-    configure_si4713(dev_handle);
-    tune_si4713(dev_handle);
-    audio_dynamic_range_control_si4713(dev_handle);
+    powerup_si4713(si4713_dev_handle);
+    configure_si4713(si4713_dev_handle);
+    tune_si4713(si4713_dev_handle);
+    audio_dynamic_range_control_si4713(si4713_dev_handle);
+
+    /* SH1106 */
+    i2c_master_dev_handle_t sh1106_dev_handle;
+    i2c_add_device(bus_handle, &sh1106_dev_handle, SH1106_SENSOR_ADDR);
+    ESP_LOGI(SH1106_TAG, "SH1106 added to I2C bus.");
+
+    configure_sh1106(sh1106_dev_handle);
+    WAIT_MS(100);
+    sh1106_display_off_on(sh1106_dev_handle, ON_STATE);
+    ESP_LOGI(SH1106_TAG, "SH1106 device ON.");
 }
