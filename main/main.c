@@ -40,10 +40,26 @@
     Object-like macros
 ===================================================================*/
 
+/* Log tag */
+#define ENCODER_TAG "ENCODER"
+
+/* Encoder pins */
+#define GPIO_INPUT_ENCODER_SIA CONFIG_GPIO_INPUT_ENCODER_SIA
+#define GPIO_INPUT_ENCODER_SIB CONFIG_GPIO_INPUT_ENCODER_SIB
+#define GPIO_INPUT_ENCODER_SW CONFIG_GPIO_INPUT_ENCODER_SW
+
+/* GPIO input/output level */
+#define GPIO_LOW 0
+#define GPIO_HIGH 1
+
+/* Value by which the tx frequency is decreased or increased with every encoder step (in 10kHz units) */
+#define ENCODER_STEP_VAL 10U
+
 /*==================================================================
     Function-like macros
 ===================================================================*/
 
+/* Waits for a specific time in ms  */
 #define WAIT_MS(time)                                   \
     do                                                  \
     {                                                   \
@@ -54,22 +70,39 @@
         }                                               \
     } while (0)
 
+/* Converts int value to its corresponding ASCII code value e.g. 0 -> '0' */
+#define INT_TO_ASCII_CHAR(x) ((x) + 0x30U)
+
 /*==================================================================
     Local types
 ===================================================================*/
 
-/* event for stack up */
+/* Event for stack up */
 enum
 {
     BT_APP_EVT_STACK_UP = 0,
+};
+
+/* Task notification indexes */
+enum
+{
+    TX_FREQ_INCREASE_EVT = 0,
+    TX_FREQ_DECREASE_EVT = 1,
+    PLAYBACK_STATE_CHANGE_EVT = 2,
 };
 
 /*==================================================================
     Local objects
 ===================================================================*/
 
-/* device name */
 static const char local_device_name[] = CONFIG_EXAMPLE_LOCAL_DEVICE_NAME;
+static uint16_t tx_frequency = TX_TUNE_FREQ_DEFAULT_VAL;
+
+static TaskHandle_t display_update_task_handle = NULL;
+
+/* Playback status strings */
+static const char str_play[] = "PLAY";
+static const char str_stop[] = "STOP";
 
 /*==================================================================
     Local function declarations
@@ -77,26 +110,171 @@ static const char local_device_name[] = CONFIG_EXAMPLE_LOCAL_DEVICE_NAME;
 
 /* Auxiliary raw data to string conversion function */
 static char *bda2str(uint8_t *bda, char *str, size_t size);
-/* Device callback function */
 static void bt_app_dev_cb(esp_bt_dev_cb_event_t event, esp_bt_dev_cb_param_t *param);
-/* GAP callback function */
 static void bt_app_gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *param);
-/* Handler for bluetooth stack enabled events */
 static void bt_av_hdl_stack_evt(uint16_t event, void *p_param);
-/* Si4713 configuration function */
 static inline void configure_si4713(i2c_master_dev_handle_t dev_handle);
-/* Si4713 powerup function */
 static inline void powerup_si4713(i2c_master_dev_handle_t dev_handle);
-/* Si4713 tuning function */
 static inline void tune_si4713(i2c_master_dev_handle_t dev_handle);
-/* Si4713 audio dynamic range control function */
 static inline void audio_dynamic_range_control_si4713(i2c_master_dev_handle_t dev_handle);
-/* SH1106 configuration function */
 static inline void configure_sh1106(i2c_master_dev_handle_t dev_handle);
-
+static void gpio_isr_handler(void *arg);
+static inline void write_initial_contents_sh1106(i2c_master_dev_handle_t dev_handle);
+static inline void init_encoder_control(void);
 /*==================================================================
     Function definitions
 ===================================================================*/
+
+/**
+ * @brief Handler for encoder GPIO ISR.
+ *
+ * This ISR handler checks the source of interrupt and notifies the display task about the event accordingly.
+ *
+ * @param[in] arg Interrupt source GPIO.
+ */
+static void IRAM_ATTR gpio_isr_handler(void *arg)
+{
+    uint32_t gpio_num = (uint32_t)arg;
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
+    if ((GPIO_INPUT_ENCODER_SIA == gpio_num) && (GPIO_HIGH == gpio_get_level(GPIO_INPUT_ENCODER_SIB)))
+    {
+        vTaskNotifyGiveIndexedFromISR(display_update_task_handle, TX_FREQ_DECREASE_EVT, &xHigherPriorityTaskWoken);
+    }
+    else if ((GPIO_INPUT_ENCODER_SIB == gpio_num) && (GPIO_HIGH == gpio_get_level(GPIO_INPUT_ENCODER_SIA)))
+    {
+        vTaskNotifyGiveIndexedFromISR(display_update_task_handle, TX_FREQ_INCREASE_EVT, &xHigherPriorityTaskWoken);
+    }
+    else if (GPIO_INPUT_ENCODER_SW == gpio_num)
+    {
+        /* toggle playback play/pause status */
+        vTaskNotifyGiveIndexedFromISR(display_update_task_handle, PLAYBACK_STATE_CHANGE_EVT, &xHigherPriorityTaskWoken);
+    }
+}
+
+/**
+ * @brief Display refresh task handler.
+ *
+ * This function waits for encoder related notifications and updates display contents if a change has occurred.
+ *
+ * @param[in] arg Task argument - not used.
+ */
+static void display_update_task_handler(void *arg)
+{
+    i2c_master_dev_handle_t dev_handle = (i2c_master_dev_handle_t)arg;
+    bool playback_state = ON_STATE;
+    const char *curr_char = NULL;
+    bool frequency_changed = false;
+
+    for (;;)
+    {
+        if (0U != ulTaskNotifyTakeIndexed(PLAYBACK_STATE_CHANGE_EVT, pdTRUE, pdMS_TO_TICKS(10)))
+        {
+            uint8_t column_address = COLUMN_ADDRESS_MIN;
+            uint8_t page_address = PLAYBACK_STATE_PAGE_ADDRESS;
+            sh1106_clear_page(dev_handle, page_address);
+            sh1106_clear_page(dev_handle, (page_address + 1U));
+
+            if (ON_STATE == playback_state)
+            {
+                curr_char = str_stop;
+                playback_state = OFF_STATE;
+            }
+            else if (OFF_STATE == playback_state)
+            {
+                curr_char = str_play;
+                playback_state = ON_STATE;
+            }
+
+            while (0 != *curr_char)
+            {
+                sh1106_write_character_big(dev_handle, *curr_char, page_address, &column_address);
+                curr_char++;
+            }
+
+            ESP_LOGI(ENCODER_TAG, "Playback state changed to %s.", (ON_STATE == playback_state) ? str_play : str_stop);
+        }
+
+        if (0U != ulTaskNotifyTakeIndexed(TX_FREQ_INCREASE_EVT, pdTRUE, pdMS_TO_TICKS(10)))
+        {
+            if (tx_frequency < TX_TUNE_FREQ_MAX)
+            {
+                tx_frequency += ENCODER_STEP_VAL;
+            }
+            else
+            {
+                tx_frequency = TX_TUNE_FREQ_MIN;
+            }
+
+            frequency_changed = true;
+        }
+        if (0U != ulTaskNotifyTakeIndexed(TX_FREQ_DECREASE_EVT, pdTRUE, pdMS_TO_TICKS(10)))
+        {
+            if (tx_frequency > TX_TUNE_FREQ_MIN)
+            {
+                tx_frequency -= ENCODER_STEP_VAL;
+            }
+            else
+            {
+                tx_frequency = TX_TUNE_FREQ_MAX;
+            }
+
+            frequency_changed = true;
+        }
+
+        if (true == frequency_changed)
+        {
+            uint8_t column_address = COLUMN_ADDRESS_MIN;
+            uint8_t page_address = TX_FREQ_PAGE_ADDRESS;
+
+            sh1106_clear_page(dev_handle, page_address);
+            sh1106_clear_page(dev_handle, (page_address + 1U));
+
+            /* Write integral part of frequency */
+            uint16_t integral_part = tx_frequency / 100U;
+            uint8_t integral_part_digits[3] = {0U};
+
+            integral_part_digits[0] = integral_part / 100U;
+            integral_part_digits[1] = (integral_part / 10U) - (integral_part_digits[0] * 10U);
+            integral_part_digits[2] = integral_part - (integral_part_digits[0] * 100U) - (integral_part_digits[1] * 10U);
+
+            for (int i = 0; i < sizeof(integral_part_digits); i++)
+            {
+                uint8_t digit = integral_part_digits[i];
+
+                /* Skip displaying 0 if frequency smaller than 100 MHz*/
+                if ((0 == i) && (0U == digit))
+                {
+                    continue;
+                }
+
+                char digit_ascii = INT_TO_ASCII_CHAR(digit);
+                sh1106_write_character_big(dev_handle, digit_ascii, page_address, &column_address);
+            }
+
+            /* Write decimal separator character */
+            sh1106_write_character_big(dev_handle, '.', page_address, &column_address);
+
+            /* Write decimal part of frequency */
+            uint16_t decimal_part = tx_frequency - (integral_part * 100U);
+            uint8_t decimal_part_digits[2] = {0U};
+
+            decimal_part_digits[0] = decimal_part / 10U;
+            decimal_part_digits[1] = decimal_part - (decimal_part_digits[0] * 10U);
+
+            for (int i = 0; i < sizeof(decimal_part_digits); i++)
+            {
+                uint8_t digit = decimal_part_digits[i];
+                char digit_ascii = INT_TO_ASCII_CHAR(digit);
+                sh1106_write_character_big(dev_handle, digit_ascii, page_address, &column_address);
+            }
+
+            frequency_changed = false;
+
+            ESP_LOGI(ENCODER_TAG, "TX frequency changed to %u.%u", integral_part, decimal_part);
+        }
+    }
+}
 
 static char *bda2str(uint8_t *bda, char *str, size_t size)
 {
@@ -111,6 +289,7 @@ static char *bda2str(uint8_t *bda, char *str, size_t size)
     return str;
 }
 
+/* Device callback function */
 static void bt_app_dev_cb(esp_bt_dev_cb_event_t event, esp_bt_dev_cb_param_t *param)
 {
     switch (event)
@@ -135,6 +314,7 @@ static void bt_app_dev_cb(esp_bt_dev_cb_event_t event, esp_bt_dev_cb_param_t *pa
     }
 }
 
+/* GAP callback function */
 static void bt_app_gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *param)
 {
     uint8_t *bda = NULL;
@@ -207,6 +387,7 @@ static void bt_app_gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *pa
     }
 }
 
+/* Handler for bluetooth stack enabled events */
 static void bt_av_hdl_stack_evt(uint16_t event, void *p_param)
 {
     ESP_LOGD(BT_AV_TAG, "%s event: %d", __func__, event);
@@ -264,8 +445,19 @@ static void bt_av_hdl_stack_evt(uint16_t event, void *p_param)
     }
 }
 
+/* Si4713 powerup function */
 static inline void powerup_si4713(i2c_master_dev_handle_t dev_handle)
 {
+    gpio_config_t rst_pin_config =
+        {
+            .pin_bit_mask = (1ULL << GPIO_OUTPUT_SI4713_RST),
+            .mode = GPIO_MODE_OUTPUT,
+            .pull_up_en = GPIO_PULLUP_DISABLE,
+            .pull_down_en = GPIO_PULLDOWN_DISABLE,
+            .intr_type = GPIO_INTR_DISABLE,
+        };
+    gpio_config(&rst_pin_config);
+
     /* put si4713 in reset */
     gpio_set_level(GPIO_OUTPUT_SI4713_RST, 0U);
     WAIT_MS(10);
@@ -285,6 +477,7 @@ static inline void powerup_si4713(i2c_master_dev_handle_t dev_handle)
     si4713_set_property(dev_handle, TX_LINE_INPUT_LEVEL, TX_LINE_INPUT_LEVEL_DEFAULT_VAL);
 }
 
+/* Si4713 configuration function */
 static inline void configure_si4713(i2c_master_dev_handle_t dev_handle)
 {
     si4713_get_rev(dev_handle);
@@ -296,6 +489,7 @@ static inline void configure_si4713(i2c_master_dev_handle_t dev_handle)
     si4713_set_property(dev_handle, TX_PILOT_DEVIATION, TX_PILOT_DEVIATION_DEFAULT_VAL);
 }
 
+/* Si4713 tuning function */
 static inline void tune_si4713(i2c_master_dev_handle_t dev_handle)
 {
     uint8_t status_expected;
@@ -304,13 +498,14 @@ static inline void tune_si4713(i2c_master_dev_handle_t dev_handle)
     status_expected = (uint8_t)((1U << STATUS_CTS_BIT_POS) | (1U << STATUS_STCINT_BIT_POS));
     si4713_get_int_status(dev_handle, status_expected, T_STC_SHORT_MS);
     si4713_tx_tune_status(dev_handle); // to clean the STCINT bit
-    si4713_tx_tune_freq(dev_handle, TX_TUNE_FREQ_DEFAULT_VAL);
+    si4713_tx_tune_freq(dev_handle, tx_frequency);
     status_expected = (uint8_t)((1U << STATUS_CTS_BIT_POS) | (1U << STATUS_STCINT_BIT_POS));
     si4713_get_int_status(dev_handle, status_expected, T_STC_LONG_MS);
     si4713_tx_tune_status(dev_handle); // to clean the STCINT bit
     si4713_set_property(dev_handle, TX_COMPONENT_ENABLE, TX_COMPONENT_ENABLE_DEFAULT_VAL);
 }
 
+/* Si4713 audio dynamic range control function */
 static inline void audio_dynamic_range_control_si4713(i2c_master_dev_handle_t dev_handle)
 {
     uint8_t status_expected;
@@ -331,6 +526,7 @@ static inline void audio_dynamic_range_control_si4713(i2c_master_dev_handle_t de
     si4713_tx_asq_status(dev_handle); // to clean the ASQINT bit
 }
 
+/* SH1106 configuration function */
 static inline void configure_sh1106(i2c_master_dev_handle_t dev_handle)
 {
     sh1106_display_off_on(dev_handle, OFF_STATE);
@@ -348,6 +544,64 @@ static inline void configure_sh1106(i2c_master_dev_handle_t dev_handle)
     sh1106_set_pump_voltage(dev_handle, VPP_9V);
     sh1106_set_normal_reverse_display(dev_handle, DISPLAY_DATA_NORMAL);
     sh1106_set_entire_display_off_on(dev_handle, OFF_STATE);
+}
+
+/* THis function writes initial contents to the display */
+static inline void write_initial_contents_sh1106(i2c_master_dev_handle_t dev_handle)
+{
+    uint8_t column_address = COLUMN_ADDRESS_MIN;
+    uint8_t page_address = HEADER_PAGE_ADDRESS;
+
+    const char str_1[] = "FM Frequency";
+    const char *curr_char = str_1;
+    while (0 != *curr_char)
+    {
+        sh1106_write_character_big(dev_handle, *curr_char, page_address, &column_address);
+        curr_char++;
+    }
+
+    column_address = COLUMN_ADDRESS_MIN;
+    page_address = NEXT_PAGE_BIG(page_address);
+
+    char str_2[7];
+    sprintf(str_2, "%d.%d", (TX_TUNE_FREQ_DEFAULT_VAL / 100), (TX_TUNE_FREQ_DEFAULT_VAL - (TX_TUNE_FREQ_DEFAULT_VAL / 100) * 100));
+    ESP_LOGI(SH1106_TAG, "%s", str_2);
+    curr_char = str_2;
+    while (0 != *curr_char)
+    {
+        sh1106_write_character_big(dev_handle, *curr_char, page_address, &column_address);
+        curr_char++;
+    }
+
+    column_address = COLUMN_ADDRESS_MIN;
+    page_address = NEXT_PAGE_BIG(page_address);
+
+    curr_char = str_play;
+    while (0 != *curr_char)
+    {
+        sh1106_write_character_big(dev_handle, *curr_char, page_address, &column_address);
+        curr_char++;
+    }
+}
+
+/* Initializes encoder pins and GPIO interrupts. */
+static inline void init_encoder_control(void)
+{
+    /* Frequency and playback control encoder */
+    gpio_config_t encoder_pins_config = {
+        .pin_bit_mask = ((1ULL << GPIO_INPUT_ENCODER_SIA) | (1ULL << GPIO_INPUT_ENCODER_SIB) | (1ULL << GPIO_INPUT_ENCODER_SW)),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_NEGEDGE,
+    };
+    gpio_config(&encoder_pins_config);
+
+    /* Configure interrupt handlers for GPIOs.  */
+    gpio_install_isr_service(0U);
+    gpio_isr_handler_add(GPIO_INPUT_ENCODER_SIA, gpio_isr_handler, (void *)GPIO_INPUT_ENCODER_SIA);
+    gpio_isr_handler_add(GPIO_INPUT_ENCODER_SIB, gpio_isr_handler, (void *)GPIO_INPUT_ENCODER_SIB);
+    gpio_isr_handler_add(GPIO_INPUT_ENCODER_SW, gpio_isr_handler, (void *)GPIO_INPUT_ENCODER_SW);
 }
 
 void app_main(void)
@@ -422,21 +676,10 @@ void app_main(void)
     i2c_init(&bus_handle);
     ESP_LOGI(I2C_MASTER_TAG, "I2C initialized successfully");
 
-    /* Si4713 */
+    // /* Si4713 */
     i2c_master_dev_handle_t si4713_dev_handle;
     i2c_add_device(bus_handle, &si4713_dev_handle, SI4173_SENSOR_ADDR);
     ESP_LOGI(SI4713_TAG, "Si4713 added to I2C bus.");
-
-    gpio_config_t rst_pin_config =
-        {
-            .pin_bit_mask = (1ULL << GPIO_OUTPUT_SI4713_RST),
-            .mode = GPIO_MODE_OUTPUT,
-            .pull_up_en = GPIO_PULLUP_DISABLE,
-            .pull_down_en = GPIO_PULLDOWN_DISABLE,
-            .intr_type = GPIO_INTR_DISABLE,
-        };
-    gpio_config(&rst_pin_config);
-    ESP_LOGI(SI4713_TAG, "GPIO initialized successfully");
 
     powerup_si4713(si4713_dev_handle);
     configure_si4713(si4713_dev_handle);
@@ -449,7 +692,18 @@ void app_main(void)
     ESP_LOGI(SH1106_TAG, "SH1106 added to I2C bus.");
 
     configure_sh1106(sh1106_dev_handle);
+    sh1106_display_off_on(sh1106_dev_handle, OFF_STATE);
     WAIT_MS(100);
     sh1106_display_off_on(sh1106_dev_handle, ON_STATE);
     ESP_LOGI(SH1106_TAG, "SH1106 device ON.");
+
+    for (int i = PAGE_ADDRESS_MIN; i <= PAGE_ADDRESS_MAX; i++)
+    {
+        sh1106_clear_page(sh1106_dev_handle, i);
+    }
+
+    write_initial_contents_sh1106(sh1106_dev_handle);
+    /* Create a task for updating the display contents */
+    xTaskCreate(display_update_task_handler, "display_update_task", 3072U, (void *)sh1106_dev_handle, 10, &display_update_task_handle);
+    init_encoder_control();
 }

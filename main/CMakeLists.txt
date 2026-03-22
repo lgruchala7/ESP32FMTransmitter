@@ -1,4 +1,6 @@
-idf_component_register(SRCS "sh1106.c" "bt_app_av.c"
+idf_component_register(SRCS "sh1106_cfg.c" 
+                            "sh1106.c" 
+                            "bt_app_av.c"
                             "bt_app_core.c"
                             "main.c"
                             "si4713.c"

@@ -34,6 +34,27 @@ menu "GPIO Example Configuration"
         default 3
         help
             GPIO pin number to be used as output connected to Si4713 RST pin.
+
+    config GPIO_INPUT_ENCODER_SIA
+        int "GPIO input pin SIA"
+        range ENV_GPIO_RANGE_MIN ENV_GPIO_OUT_RANGE_MAX
+        default 15
+        help
+            GPIO pin number to be used as input connected to encoder SIA pin.
+
+    config GPIO_INPUT_ENCODER_SIB
+        int "GPIO input pin SIB"
+        range ENV_GPIO_RANGE_MIN ENV_GPIO_OUT_RANGE_MAX
+        default 18
+        help
+            GPIO pin number to be used as input connected to encoder SIB pin.
+
+    config GPIO_INPUT_ENCODER_SW
+        int "GPIO input pin SW"
+        range ENV_GPIO_RANGE_MIN ENV_GPIO_OUT_RANGE_MAX
+        default 23
+        help
+            GPIO pin number to be used as input connected to encoder SW pin.
 endmenu
 
 menu "A2DP Example Configuration"

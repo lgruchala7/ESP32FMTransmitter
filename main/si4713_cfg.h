@@ -30,6 +30,10 @@
 #define T_COMP_MS 10U      /* SET_PROPERTY max. execution time in ms */
 #define T_INT_MS 1U        /* Interrupt duration in us after command is executed. (1 us rounded up to ms)  */
 
+/* Min/max values of command arguments and properties */
+#define TX_TUNE_FREQ_MIN 0x2260U /* 88 MHz = 8800d = 0x2260 */
+#define TX_TUNE_FREQ_MAX 0x2A30U /* 108 MHz = 10800d = 0x2A30 */
+
 /* Default values of command arguments and properties */
 #define POWER_UP_DEFAULT_VAL 0x1250U            /* Set to FM Transmit. Enable interrupts; Set to Analog Line Input. */
 #define TX_LINE_INPUT_LEVEL_DEFAULT_VAL 0x327CU /* Input Range = 3 (636mV_PK, 60kΩ); Max peak input level = 0x27C (636mV_PK) */

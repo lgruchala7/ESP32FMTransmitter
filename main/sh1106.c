@@ -29,13 +29,21 @@
 #define DC_RAM_OPERATION 1U
 
 /*==================================================================
- Function-like macros
+    Function-like macros
 ===================================================================*/
+
+/* Get bitmap data for a specific ASCII character */
+#define GET_FONT_DATA_SMALL(c) (&sh1106_font_characters_small[(uint8_t)(c) - 0x20U][0])
+#define GET_FONT_DATA_BIG_UPPER(c) (&sh1106_font_characters_big[(uint8_t)(c) - 0x20U][0])
+#define GET_FONT_DATA_BIG_LOWER(c) (&sh1106_font_characters_big[(uint8_t)(c) - 0x20U][FONT_WIDTH_BIG])
+#define GET_FONT_DATA_BOLD_BIG_UPPER(c) (&sh1106_font_characters_bold_big[(uint8_t)(c) - 0x20U][0])
+#define GET_FONT_DATA_BOLD_BIG_LOWER(c) (&sh1106_font_characters_bold_big[(uint8_t)(c) - 0x20U][FONT_WIDTH_BOLD_BIG])
 
 /*==================================================================
     Local types
 ===================================================================*/
 
+/* Control byte internal structure. MSB -> Co bit*/
 typedef union
 {
     struct
@@ -83,7 +91,7 @@ typedef enum
     Local function declarations
 ===================================================================*/
 
-static inline void sh1106_send_cmd(i2c_master_dev_handle_t dev_handle, sh1106_ctrl_byte_t control_byte, const uint8_t *data_bytes, uint8_t data_bytes_cnt);
+static inline void sh1106_send_cmd(i2c_master_dev_handle_t dev_handle, sh1106_ctrl_byte_t ctrl_byte, const uint8_t *data_bytes, uint8_t data_bytes_cnt);
 
 /*==================================================================
     Function definitions
@@ -93,13 +101,13 @@ static inline void sh1106_send_cmd(i2c_master_dev_handle_t dev_handle, sh1106_ct
  * @brief Send command with data to SH1106.
  *
  * @param[in] dev_handle I2C master device handle.
- * @param[in] control_byte SH1106 command control byte value.
+ * @param[in] ctrl_byte SH1106 command control byte value.
  * @param[in] data_bytes SH1106 command data pointer.
  * @param[in] data_bytes_cnt SH1106 command data count.
  */
-static inline void sh1106_send_cmd(i2c_master_dev_handle_t dev_handle, sh1106_ctrl_byte_t control_byte, const uint8_t *data_bytes, uint8_t data_bytes_cnt)
+static inline void sh1106_send_cmd(i2c_master_dev_handle_t dev_handle, sh1106_ctrl_byte_t ctrl_byte, const uint8_t *data_bytes, uint8_t data_bytes_cnt)
 {
-    ESP_ERROR_CHECK(i2c_send_cmd(dev_handle, control_byte.value, data_bytes, data_bytes_cnt));
+    ESP_ERROR_CHECK(i2c_send_cmd(dev_handle, ctrl_byte.value, data_bytes, data_bytes_cnt));
 }
 
 /**
@@ -143,7 +151,7 @@ esp_err_t sh1106_set_page_address(i2c_master_dev_handle_t dev_handle, uint8_t ad
 {
     if ((PAGE_ADDRESS_MIN > address) || (address > PAGE_ADDRESS_MAX))
     {
-        ESP_LOGE(SH1106_TAG, "Invalid page address: %u", address);
+        ESP_LOGE(SH1106_TAG, "Invalid page address: %u. Valid range: <%u-%u>.", address, PAGE_ADDRESS_MIN, PAGE_ADDRESS_MAX);
     }
 
     sh1106_ctrl_byte_t ctrl_byte = {.co = CO_LAST_CTRL_BYTE, .dc = DC_CMD_OPERATION};
@@ -543,7 +551,163 @@ esp_err_t sh1106_set_entire_display_off_on(i2c_master_dev_handle_t dev_handle, b
 
     sh1106_send_cmd(dev_handle, ctrl_byte, &data, sizeof(data));
 
-    ESP_LOGI(SH1106_TAG, "Enitire display set %s.", ((true == state) ? "on" : "off"));
+    ESP_LOGI(SH1106_TAG, "Entire display set %s.", ((true == state) ? "on" : "off"));
+
+    return ESP_OK;
+}
+
+/**
+ * @brief Writes a small font character to the display.
+ *
+ * @param[in] dev_handle I2C master device handle.
+ * @param[in] c Character to b e written.
+ * @param[in] page_address Write operation page address.
+ * @param[in,out] column_address Write operation column address pointer.
+ * @return
+ *      - ESP_OK: Write Small Character command successful.
+ *      - ESP_FAIL: Write Small Character command failed.
+ */
+esp_err_t sh1106_write_character_small(i2c_master_dev_handle_t dev_handle, char c, uint8_t page_address, uint8_t *column_address)
+{
+    esp_err_t ret_val = ESP_FAIL;
+
+    if ((PAGE_ADDRESS_MIN > page_address) || (page_address > PAGE_ADDRESS_MAX))
+    {
+        ESP_LOGE(SH1106_TAG, "Invalid page address: %u. Valid range: <%u-%u>.", page_address, PAGE_ADDRESS_MIN, PAGE_ADDRESS_MAX);
+    }
+
+    else if ((COLUMN_ADDRESS_MIN > *column_address) || (*column_address > (COLUMN_ADDRESS_MAX - FONT_WIDTH_SMALL)))
+    {
+        ESP_LOGE(SH1106_TAG, "Invalid column address: %u. Valid range: <%u-%u>.", *column_address, COLUMN_ADDRESS_MIN, (COLUMN_ADDRESS_MAX - FONT_WIDTH_SMALL));
+    }
+    else
+    {
+        const uint8_t *data = GET_FONT_DATA_SMALL(c);
+        sh1106_set_page_address(dev_handle, page_address);
+        sh1106_set_column_address(dev_handle, *column_address);
+        sh1106_write_display_data(dev_handle, data, FONT_WIDTH_SMALL);
+        *column_address += FONT_WIDTH_SMALL;
+
+        ret_val = ESP_OK;
+    }
+
+    return ret_val;
+}
+
+/**
+ * @brief Writes a big font character to the display.
+ *
+ * @param[in] dev_handle I2C master device handle.
+ * @param[in] c Character to b e written.
+ * @param[in] page_address Write operation page address.
+ * @param[in,out] column_address Write operation column address pointer.
+ * @return
+ *      - ESP_OK: Write Big Character command successful.
+ *      - ESP_FAIL: Write Big Character command failed.
+ */
+esp_err_t sh1106_write_character_big(i2c_master_dev_handle_t dev_handle, char c, uint8_t page_address, uint8_t *column_address)
+{
+    esp_err_t ret_val = ESP_FAIL;
+
+    if ((PAGE_ADDRESS_MIN > page_address) || (page_address > (PAGE_ADDRESS_MAX - 1U)))
+    {
+        ESP_LOGE(SH1106_TAG, "Invalid page address: %u. Valid range: <%u-%u>.", page_address, PAGE_ADDRESS_MIN, (PAGE_ADDRESS_MAX - 1U));
+    }
+    else if ((COLUMN_ADDRESS_MIN > *column_address) || (*column_address > (COLUMN_ADDRESS_MAX - FONT_WIDTH_BIG)))
+    {
+        ESP_LOGE(SH1106_TAG, "Invalid column address: %u. Valid range: <%u-%u>.", column_address, COLUMN_ADDRESS_MIN, (COLUMN_ADDRESS_MAX - FONT_WIDTH_BIG));
+    }
+    else
+    {
+        const uint8_t *data = GET_FONT_DATA_BIG_UPPER(c);
+        sh1106_set_page_address(dev_handle, page_address);
+        sh1106_set_column_address(dev_handle, *column_address);
+        sh1106_write_display_data(dev_handle, data, FONT_WIDTH_BIG);
+
+        data = GET_FONT_DATA_BIG_LOWER(c);
+        sh1106_set_page_address(dev_handle, page_address + 1U);
+        sh1106_set_column_address(dev_handle, *column_address);
+        sh1106_write_display_data(dev_handle, data, FONT_WIDTH_BIG);
+
+        sh1106_set_page_address(dev_handle, page_address);
+        *column_address += FONT_WIDTH_BIG;
+
+        ret_val = ESP_OK;
+    }
+
+    return ret_val;
+}
+
+/**
+ * @brief Writes a big font bolded character to the display.
+ *
+ * @param[in] dev_handle I2C master device handle.
+ * @param[in] c Character to b e written.
+ * @param[in] page_address Write operation page address.
+ * @param[in,out] column_address Write operation column address pointer.
+ * @return
+ *      - ESP_OK: Write Big Bolded Character command successful.
+ *      - ESP_FAIL: Write Big Bolded Character command failed.
+ */
+esp_err_t sh1106_write_character_bold_big(i2c_master_dev_handle_t dev_handle, char c, uint8_t page_address, uint8_t *column_address)
+{
+    esp_err_t ret_val = ESP_FAIL;
+
+    if ((PAGE_ADDRESS_MIN > page_address) || (page_address > (PAGE_ADDRESS_MAX - 1U)))
+    {
+        ESP_LOGE(SH1106_TAG, "Invalid page address: %u. Valid range: <%u-%u>.", page_address, PAGE_ADDRESS_MIN, (PAGE_ADDRESS_MAX - 1U));
+    }
+    else if ((COLUMN_ADDRESS_MIN > *column_address) || (*column_address > (COLUMN_ADDRESS_MAX - FONT_WIDTH_BOLD_BIG)))
+    {
+        ESP_LOGE(SH1106_TAG, "Invalid column address: %u. Valid range: <%u-%u>.", column_address, COLUMN_ADDRESS_MIN, (COLUMN_ADDRESS_MAX - FONT_WIDTH_BOLD_BIG));
+    }
+    else
+    {
+        const uint8_t *data = GET_FONT_DATA_BOLD_BIG_UPPER(c);
+        sh1106_set_page_address(dev_handle, page_address);
+        sh1106_set_column_address(dev_handle, *column_address);
+        sh1106_write_display_data(dev_handle, data, FONT_WIDTH_BOLD_BIG);
+
+        data = GET_FONT_DATA_BOLD_BIG_LOWER(c);
+        sh1106_set_page_address(dev_handle, page_address + 1U);
+        sh1106_set_column_address(dev_handle, *column_address);
+        sh1106_write_display_data(dev_handle, data, FONT_WIDTH_BOLD_BIG);
+
+        sh1106_set_page_address(dev_handle, page_address);
+        *column_address += FONT_WIDTH_BOLD_BIG;
+
+        ret_val = ESP_OK;
+    }
+
+    return ret_val;
+}
+
+/**
+ * @brief Clears the whole display page.
+ *
+ * @param[in] dev_handle I2C master device handle.
+ * @param[in] address Page address.
+ * @return
+ *      - ESP_OK: Clear Page command successful.
+ */
+esp_err_t sh1106_clear_page(i2c_master_dev_handle_t dev_handle, uint8_t address)
+{
+    const uint8_t data_buff[DATA_BUFFER_MAX] = {0x00U};
+
+    sh1106_set_page_address(dev_handle, address);
+    sh1106_set_column_address(dev_handle, COLUMN_ADDRESS_MIN);
+
+    for (int col = COLUMN_ADDRESS_MIN; col <= COLUMN_ADDRESS_MAX; col += DATA_BUFFER_MAX)
+    {
+        if ((COLUMN_ADDRESS_MAX - col + 1U) < sizeof(data_buff))
+        {
+            sh1106_write_display_data(dev_handle, data_buff, (COLUMN_ADDRESS_MAX - col + 1U));
+        }
+        else
+        {
+            sh1106_write_display_data(dev_handle, data_buff, sizeof(data_buff));
+        }
+    }
 
     return ESP_OK;
 }
