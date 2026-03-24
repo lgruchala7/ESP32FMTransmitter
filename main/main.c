@@ -35,6 +35,7 @@
 #include "si4713_cfg.h"
 #include "sh1106.h"
 #include "sh1106_cfg.h"
+#include "driver/gptimer.h"
 
 /*==================================================================
     Object-like macros
@@ -54,6 +55,7 @@
 
 /* Value by which the tx frequency is decreased or increased with every encoder step (in 10kHz units) */
 #define ENCODER_STEP_VAL 10U
+#define KNOB_DEBOUNCING_TIME_US 5000U
 
 /*==================================================================
     Function-like macros
@@ -83,7 +85,7 @@ enum
     BT_APP_EVT_STACK_UP = 0,
 };
 
-/* Task notification indexes */
+/* Encoder knob events */
 enum
 {
     TX_FREQ_INCREASE_EVT = 0,
@@ -98,29 +100,39 @@ enum
 static const char local_device_name[] = CONFIG_EXAMPLE_LOCAL_DEVICE_NAME;
 static uint16_t tx_frequency = TX_TUNE_FREQ_DEFAULT_VAL;
 
-static TaskHandle_t display_update_task_handle = NULL;
-
 /* Playback status strings */
 static const char str_play[] = "PLAY";
 static const char str_stop[] = "STOP";
+
+static TaskHandle_t display_update_task_handle = NULL;
+static i2c_master_dev_handle_t sh1106_dev_handle = NULL;
+static i2c_master_dev_handle_t si4713_dev_handle = NULL;
+static gptimer_handle_t debounce_timer = NULL;
+static int knob_debounce_event;
 
 /*==================================================================
     Local function declarations
 ===================================================================*/
 
-/* Auxiliary raw data to string conversion function */
-static char *bda2str(uint8_t *bda, char *str, size_t size);
+/* Inline functions */
+static inline void configure_si4713(void);
+static inline void powerup_si4713(void);
+static inline void tune_si4713(void);
+static inline void audio_dynamic_range_control_si4713(void);
+static inline void configure_sh1106(void);
+static inline void write_initial_contents_sh1106(void);
+static inline void init_encoder_control(void);
+
+/* Handlers and callbacks */
 static void bt_app_dev_cb(esp_bt_dev_cb_event_t event, esp_bt_dev_cb_param_t *param);
 static void bt_app_gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *param);
+static bool knob_debounce_timer_cb(gptimer_handle_t timer, const gptimer_alarm_event_data_t *edata, void *user_data);
 static void bt_av_hdl_stack_evt(uint16_t event, void *p_param);
-static inline void configure_si4713(i2c_master_dev_handle_t dev_handle);
-static inline void powerup_si4713(i2c_master_dev_handle_t dev_handle);
-static inline void tune_si4713(i2c_master_dev_handle_t dev_handle);
-static inline void audio_dynamic_range_control_si4713(i2c_master_dev_handle_t dev_handle);
-static inline void configure_sh1106(i2c_master_dev_handle_t dev_handle);
 static void gpio_isr_handler(void *arg);
-static inline void write_initial_contents_sh1106(i2c_master_dev_handle_t dev_handle);
-static inline void init_encoder_control(void);
+
+/* Auxiliary functions */
+static char *bda2str(uint8_t *bda, char *str, size_t size);
+
 /*==================================================================
     Function definitions
 ===================================================================*/
@@ -128,28 +140,86 @@ static inline void init_encoder_control(void);
 /**
  * @brief Handler for encoder GPIO ISR.
  *
- * This ISR handler checks the source of interrupt and notifies the display task about the event accordingly.
+ * This ISR handler checks the source of interrupt and starts the debounce timer.
  *
  * @param[in] arg Interrupt source GPIO.
  */
 static void IRAM_ATTR gpio_isr_handler(void *arg)
 {
     uint32_t gpio_num = (uint32_t)arg;
+    uint64_t timer_count;
+
+    gptimer_get_raw_count(debounce_timer, &timer_count);
+
+    if (0U == timer_count)
+    {
+        if ((GPIO_INPUT_ENCODER_SIA == gpio_num) && (GPIO_HIGH == gpio_get_level(GPIO_INPUT_ENCODER_SIB)))
+        {
+            knob_debounce_event = TX_FREQ_DECREASE_EVT;
+            gptimer_start(debounce_timer);
+        }
+        else if ((GPIO_INPUT_ENCODER_SIB == gpio_num) && (GPIO_HIGH == gpio_get_level(GPIO_INPUT_ENCODER_SIA)))
+        {
+            knob_debounce_event = TX_FREQ_INCREASE_EVT;
+            gptimer_start(debounce_timer);
+        }
+        else if (GPIO_INPUT_ENCODER_SW == gpio_num)
+        {
+            /* toggle playback play/pause status */
+            knob_debounce_event = PLAYBACK_STATE_CHANGE_EVT;
+            gptimer_start(debounce_timer);
+        }
+        else
+        {
+            /* Do nothing */
+        }
+    }
+}
+
+/**
+ * @brief Callback for debounce timer alarm event.
+ *
+ * This timer callback function performs knob debounce check. If a knob event is confirmed, the display task is notified.
+ *
+ * @param[in] timer Timer handle.
+ * @param[in] edata Alarm event data, fed by driver.
+ * @param[in] user_data User data.
+ */
+static bool IRAM_ATTR knob_debounce_timer_cb(gptimer_handle_t timer, const gptimer_alarm_event_data_t *edata, void *user_data)
+{
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
-    if ((GPIO_INPUT_ENCODER_SIA == gpio_num) && (GPIO_HIGH == gpio_get_level(GPIO_INPUT_ENCODER_SIB)))
+    switch (knob_debounce_event)
     {
-        vTaskNotifyGiveIndexedFromISR(display_update_task_handle, TX_FREQ_DECREASE_EVT, &xHigherPriorityTaskWoken);
+    case TX_FREQ_DECREASE_EVT:
+        if (GPIO_LOW == gpio_get_level(GPIO_INPUT_ENCODER_SIA))
+        {
+            vTaskNotifyGiveIndexedFromISR(display_update_task_handle, TX_FREQ_DECREASE_EVT, &xHigherPriorityTaskWoken);
+        }
+        break;
+
+    case TX_FREQ_INCREASE_EVT:
+        if (GPIO_LOW == gpio_get_level(GPIO_INPUT_ENCODER_SIB))
+        {
+            vTaskNotifyGiveIndexedFromISR(display_update_task_handle, TX_FREQ_INCREASE_EVT, &xHigherPriorityTaskWoken);
+        }
+        break;
+
+    case PLAYBACK_STATE_CHANGE_EVT:
+        if (GPIO_LOW == gpio_get_level(GPIO_INPUT_ENCODER_SW))
+        {
+            vTaskNotifyGiveIndexedFromISR(display_update_task_handle, PLAYBACK_STATE_CHANGE_EVT, &xHigherPriorityTaskWoken);
+        }
+        break;
+
+    default:
+        break;
     }
-    else if ((GPIO_INPUT_ENCODER_SIB == gpio_num) && (GPIO_HIGH == gpio_get_level(GPIO_INPUT_ENCODER_SIA)))
-    {
-        vTaskNotifyGiveIndexedFromISR(display_update_task_handle, TX_FREQ_INCREASE_EVT, &xHigherPriorityTaskWoken);
-    }
-    else if (GPIO_INPUT_ENCODER_SW == gpio_num)
-    {
-        /* toggle playback play/pause status */
-        vTaskNotifyGiveIndexedFromISR(display_update_task_handle, PLAYBACK_STATE_CHANGE_EVT, &xHigherPriorityTaskWoken);
-    }
+
+    gptimer_stop(debounce_timer);
+    gptimer_set_raw_count(debounce_timer, 0U);
+
+    return false;
 }
 
 /**
@@ -161,7 +231,6 @@ static void IRAM_ATTR gpio_isr_handler(void *arg)
  */
 static void display_update_task_handler(void *arg)
 {
-    i2c_master_dev_handle_t dev_handle = (i2c_master_dev_handle_t)arg;
     bool playback_state = ON_STATE;
     const char *curr_char = NULL;
     bool frequency_changed = false;
@@ -172,8 +241,8 @@ static void display_update_task_handler(void *arg)
         {
             uint8_t column_address = COLUMN_ADDRESS_MIN;
             uint8_t page_address = PLAYBACK_STATE_PAGE_ADDRESS;
-            sh1106_clear_page(dev_handle, page_address);
-            sh1106_clear_page(dev_handle, (page_address + 1U));
+            sh1106_clear_page(sh1106_dev_handle, page_address);
+            sh1106_clear_page(sh1106_dev_handle, (page_address + 1U));
 
             if (ON_STATE == playback_state)
             {
@@ -188,7 +257,7 @@ static void display_update_task_handler(void *arg)
 
             while (0 != *curr_char)
             {
-                sh1106_write_character_big(dev_handle, *curr_char, page_address, &column_address);
+                sh1106_write_character_big(sh1106_dev_handle, *curr_char, page_address, &column_address);
                 curr_char++;
             }
 
@@ -224,11 +293,15 @@ static void display_update_task_handler(void *arg)
 
         if (true == frequency_changed)
         {
+            /* Change FM transmitter actual frequency */
+            si4713_tx_tune_freq(si4713_dev_handle, tx_frequency);
+
+            /* Change displayed frequency */
             uint8_t column_address = COLUMN_ADDRESS_MIN;
             uint8_t page_address = TX_FREQ_PAGE_ADDRESS;
 
-            sh1106_clear_page(dev_handle, page_address);
-            sh1106_clear_page(dev_handle, (page_address + 1U));
+            sh1106_clear_page(sh1106_dev_handle, page_address);
+            sh1106_clear_page(sh1106_dev_handle, (page_address + 1U));
 
             /* Write integral part of frequency */
             uint16_t integral_part = tx_frequency / 100U;
@@ -249,11 +322,11 @@ static void display_update_task_handler(void *arg)
                 }
 
                 char digit_ascii = INT_TO_ASCII_CHAR(digit);
-                sh1106_write_character_big(dev_handle, digit_ascii, page_address, &column_address);
+                sh1106_write_character_big(sh1106_dev_handle, digit_ascii, page_address, &column_address);
             }
 
             /* Write decimal separator character */
-            sh1106_write_character_big(dev_handle, '.', page_address, &column_address);
+            sh1106_write_character_big(sh1106_dev_handle, '.', page_address, &column_address);
 
             /* Write decimal part of frequency */
             uint16_t decimal_part = tx_frequency - (integral_part * 100U);
@@ -266,7 +339,7 @@ static void display_update_task_handler(void *arg)
             {
                 uint8_t digit = decimal_part_digits[i];
                 char digit_ascii = INT_TO_ASCII_CHAR(digit);
-                sh1106_write_character_big(dev_handle, digit_ascii, page_address, &column_address);
+                sh1106_write_character_big(sh1106_dev_handle, digit_ascii, page_address, &column_address);
             }
 
             frequency_changed = false;
@@ -276,6 +349,7 @@ static void display_update_task_handler(void *arg)
     }
 }
 
+/* Auxiliary raw data to string conversion function */
 static char *bda2str(uint8_t *bda, char *str, size_t size)
 {
     if (bda == NULL || str == NULL || size < 18)
@@ -446,7 +520,7 @@ static void bt_av_hdl_stack_evt(uint16_t event, void *p_param)
 }
 
 /* Si4713 powerup function */
-static inline void powerup_si4713(i2c_master_dev_handle_t dev_handle)
+static inline void powerup_si4713(void)
 {
     gpio_config_t rst_pin_config =
         {
@@ -466,7 +540,7 @@ static inline void powerup_si4713(i2c_master_dev_handle_t dev_handle)
     gpio_set_level(GPIO_OUTPUT_SI4713_RST, 1U);
     WAIT_MS(10);
 
-    if (ESP_OK == si4713_powerup_analog(dev_handle, POWER_UP_DEFAULT_VAL))
+    if (ESP_OK == si4713_powerup_analog(si4713_dev_handle, POWER_UP_DEFAULT_VAL))
     {
         ESP_LOGI(SI4713_TAG, "Si4713 initialized successfully");
     }
@@ -474,80 +548,80 @@ static inline void powerup_si4713(i2c_master_dev_handle_t dev_handle)
     {
         ESP_LOGI(SI4713_TAG, "Si4713 initialization failed");
     }
-    si4713_set_property(dev_handle, TX_LINE_INPUT_LEVEL, TX_LINE_INPUT_LEVEL_DEFAULT_VAL);
+    si4713_set_property(si4713_dev_handle, TX_LINE_INPUT_LEVEL, TX_LINE_INPUT_LEVEL_DEFAULT_VAL);
 }
 
 /* Si4713 configuration function */
-static inline void configure_si4713(i2c_master_dev_handle_t dev_handle)
+static inline void configure_si4713(void)
 {
-    si4713_get_rev(dev_handle);
-    si4713_set_property(dev_handle, GPO_IEN, GPO_IEN_DEFAULT_VAL);
-    si4713_set_property(dev_handle, TX_LINE_INPUT_MUTE, TX_LINE_INPUT_MUTE_DEFAULT_VAL);
-    si4713_set_property(dev_handle, TX_PREEMPHASIS, TX_PREEMPHASIS_DEFAULT_VAL);
-    si4713_set_property(dev_handle, TX_PILOT_FREQUENCY, TX_PILOT_FREQUENCY_DEFAULT_VAL);
-    si4713_set_property(dev_handle, TX_AUDIO_DEVIATION, TX_AUDIO_DEVIATION_DEFAULT_VAL);
-    si4713_set_property(dev_handle, TX_PILOT_DEVIATION, TX_PILOT_DEVIATION_DEFAULT_VAL);
+    si4713_get_rev(si4713_dev_handle);
+    si4713_set_property(si4713_dev_handle, GPO_IEN, GPO_IEN_DEFAULT_VAL);
+    si4713_set_property(si4713_dev_handle, TX_LINE_INPUT_MUTE, TX_LINE_INPUT_MUTE_DEFAULT_VAL);
+    si4713_set_property(si4713_dev_handle, TX_PREEMPHASIS, TX_PREEMPHASIS_DEFAULT_VAL);
+    si4713_set_property(si4713_dev_handle, TX_PILOT_FREQUENCY, TX_PILOT_FREQUENCY_DEFAULT_VAL);
+    si4713_set_property(si4713_dev_handle, TX_AUDIO_DEVIATION, TX_AUDIO_DEVIATION_DEFAULT_VAL);
+    si4713_set_property(si4713_dev_handle, TX_PILOT_DEVIATION, TX_PILOT_DEVIATION_DEFAULT_VAL);
 }
 
 /* Si4713 tuning function */
-static inline void tune_si4713(i2c_master_dev_handle_t dev_handle)
+static inline void tune_si4713(void)
 {
     uint8_t status_expected;
 
-    si4713_tx_tune_power(dev_handle, TX_TUNE_POWER_DEFAULT_VAL);
+    si4713_tx_tune_power(si4713_dev_handle, TX_TUNE_POWER_DEFAULT_VAL);
     status_expected = (uint8_t)((1U << STATUS_CTS_BIT_POS) | (1U << STATUS_STCINT_BIT_POS));
-    si4713_get_int_status(dev_handle, status_expected, T_STC_SHORT_MS);
-    si4713_tx_tune_status(dev_handle); // to clean the STCINT bit
-    si4713_tx_tune_freq(dev_handle, tx_frequency);
+    si4713_get_int_status(si4713_dev_handle, status_expected, T_STC_SHORT_MS);
+    si4713_tx_tune_status(si4713_dev_handle); // to clean the STCINT bit
+    si4713_tx_tune_freq(si4713_dev_handle, tx_frequency);
     status_expected = (uint8_t)((1U << STATUS_CTS_BIT_POS) | (1U << STATUS_STCINT_BIT_POS));
-    si4713_get_int_status(dev_handle, status_expected, T_STC_LONG_MS);
-    si4713_tx_tune_status(dev_handle); // to clean the STCINT bit
-    si4713_set_property(dev_handle, TX_COMPONENT_ENABLE, TX_COMPONENT_ENABLE_DEFAULT_VAL);
+    si4713_get_int_status(si4713_dev_handle, status_expected, T_STC_LONG_MS);
+    si4713_tx_tune_status(si4713_dev_handle); // to clean the STCINT bit
+    si4713_set_property(si4713_dev_handle, TX_COMPONENT_ENABLE, TX_COMPONENT_ENABLE_DEFAULT_VAL);
 }
 
 /* Si4713 audio dynamic range control function */
-static inline void audio_dynamic_range_control_si4713(i2c_master_dev_handle_t dev_handle)
+static inline void audio_dynamic_range_control_si4713(void)
 {
     uint8_t status_expected;
 
-    si4713_set_property(dev_handle, TX_ACOMP_THRESHOLD, TX_ACOMP_THRESHOLD_DEFAULT_VAL);
-    si4713_set_property(dev_handle, TX_ACOMP_GAIN, TX_ACOMP_GAIN_DEFAULT_VAL);
-    si4713_set_property(dev_handle, TX_ACOMP_RELEASE_TIME, TX_ACOMP_RELEASE_TIME_DEFAULT_VAL);
-    si4713_set_property(dev_handle, TX_ACOMP_ATTACK_TIME, TX_ACOMP_ATTACK_TIME_DEFAULT_VAL);
-    si4713_set_property(dev_handle, TX_ACOMP_ENABLE, TX_ACOMP_ENABLE_DEFAULT_VAL);
-    si4713_set_property(dev_handle, TX_LIMITER_RELEASE_TIME, TX_LIMITER_RELEASE_TIME_DEFAULT_VAL);
-    si4713_set_property(dev_handle, TX_ASQ_LEVEL_LOW, TX_ASQ_LEVEL_LOW_DEFAULT_VAL);
-    si4713_set_property(dev_handle, TX_ASQ_DURATION_LOW, TX_ASQ_DURATION_LOW_DEFAULT_VAL);
-    si4713_set_property(dev_handle, TX_ASQ_LEVEL_HIGH, TX_ASQ_LEVEL_HIGH_DEFAULT_VAL);
-    si4713_set_property(dev_handle, TX_ASQ_DURATION_HIGH, TX_ASQ_DURATION_HIGH_DEFAULT_VAL);
-    si4713_set_property(dev_handle, TX_ASQ_INTERRUPT_SOURCE, TX_ASQ_INTERRUPT_SOURCE_DEFAULT_VAL);
+    si4713_set_property(si4713_dev_handle, TX_ACOMP_THRESHOLD, TX_ACOMP_THRESHOLD_DEFAULT_VAL);
+    si4713_set_property(si4713_dev_handle, TX_ACOMP_GAIN, TX_ACOMP_GAIN_DEFAULT_VAL);
+    si4713_set_property(si4713_dev_handle, TX_ACOMP_RELEASE_TIME, TX_ACOMP_RELEASE_TIME_DEFAULT_VAL);
+    si4713_set_property(si4713_dev_handle, TX_ACOMP_ATTACK_TIME, TX_ACOMP_ATTACK_TIME_DEFAULT_VAL);
+    si4713_set_property(si4713_dev_handle, TX_ACOMP_ENABLE, TX_ACOMP_ENABLE_DEFAULT_VAL);
+    si4713_set_property(si4713_dev_handle, TX_LIMITER_RELEASE_TIME, TX_LIMITER_RELEASE_TIME_DEFAULT_VAL);
+    si4713_set_property(si4713_dev_handle, TX_ASQ_LEVEL_LOW, TX_ASQ_LEVEL_LOW_DEFAULT_VAL);
+    si4713_set_property(si4713_dev_handle, TX_ASQ_DURATION_LOW, TX_ASQ_DURATION_LOW_DEFAULT_VAL);
+    si4713_set_property(si4713_dev_handle, TX_ASQ_LEVEL_HIGH, TX_ASQ_LEVEL_HIGH_DEFAULT_VAL);
+    si4713_set_property(si4713_dev_handle, TX_ASQ_DURATION_HIGH, TX_ASQ_DURATION_HIGH_DEFAULT_VAL);
+    si4713_set_property(si4713_dev_handle, TX_ASQ_INTERRUPT_SOURCE, TX_ASQ_INTERRUPT_SOURCE_DEFAULT_VAL);
     status_expected = (uint8_t)((1U << STATUS_CTS_BIT_POS) | (1U << STATUS_ASQINT_BIT_POS));
-    si4713_get_int_status(dev_handle, status_expected, 1U);
-    si4713_tx_asq_status(dev_handle); // to clean the ASQINT bit
+    si4713_get_int_status(si4713_dev_handle, status_expected, 1U);
+    si4713_tx_asq_status(si4713_dev_handle); // to clean the ASQINT bit
 }
 
 /* SH1106 configuration function */
-static inline void configure_sh1106(i2c_master_dev_handle_t dev_handle)
+static inline void configure_sh1106(void)
 {
-    sh1106_display_off_on(dev_handle, OFF_STATE);
-    sh1106_set_clock_div_ratio_osc_freq(dev_handle, DIV_RATIO(1U), OSC_FREQ_DEFAULT);
-    sh1106_set_multiplex_ratio(dev_handle, MUX_RATIO(64U));
-    sh1106_set_display_offset(dev_handle, DISPLAY_OFFSET(0U));
-    sh1106_set_display_start_line(dev_handle, DISPLAY_START_LINE(0U));
-    sh1106_set_dc_dc_off_on(dev_handle, ON_STATE);
-    sh1106_set_segment_remap(dev_handle, ADC_REVERSE_DIR);
-    sh1106_set_common_output_scan_dir(dev_handle, SCAN_DIR_DESCENDING);
-    sh1106_set_common_pads_hw_config(dev_handle, HW_CONFIG_MODE_ALTERNATIVE);
-    sh1106_set_contrast_ctrl_register(dev_handle, DISPLAY_CONTRAST_VERY_HIGH);
-    sh1106_set_discharge_precharge_period(dev_handle, DISCHARGE_PERIOD_DCLK(1U), PRECHARGE_PERIOD_DCLK(15U));
-    sh1106_set_vcom_deselect_lvl(dev_handle, 100U);
-    sh1106_set_pump_voltage(dev_handle, VPP_9V);
-    sh1106_set_normal_reverse_display(dev_handle, DISPLAY_DATA_NORMAL);
-    sh1106_set_entire_display_off_on(dev_handle, OFF_STATE);
+    sh1106_display_off_on(sh1106_dev_handle, OFF_STATE);
+    sh1106_set_clock_div_ratio_osc_freq(sh1106_dev_handle, DIV_RATIO(1U), OSC_FREQ_DEFAULT);
+    sh1106_set_multiplex_ratio(sh1106_dev_handle, MUX_RATIO(64U));
+    sh1106_set_display_offset(sh1106_dev_handle, DISPLAY_OFFSET(0U));
+    sh1106_set_display_start_line(sh1106_dev_handle, DISPLAY_START_LINE(0U));
+    sh1106_set_dc_dc_off_on(sh1106_dev_handle, ON_STATE);
+    sh1106_set_segment_remap(sh1106_dev_handle, ADC_REVERSE_DIR);
+    sh1106_set_common_output_scan_dir(sh1106_dev_handle, SCAN_DIR_DESCENDING);
+    sh1106_set_common_pads_hw_config(sh1106_dev_handle, HW_CONFIG_MODE_ALTERNATIVE);
+    sh1106_set_contrast_ctrl_register(sh1106_dev_handle, DISPLAY_CONTRAST_VERY_HIGH);
+    sh1106_set_discharge_precharge_period(sh1106_dev_handle, DISCHARGE_PERIOD_DCLK(1U), PRECHARGE_PERIOD_DCLK(15U));
+    sh1106_set_vcom_deselect_lvl(sh1106_dev_handle, 100U);
+    sh1106_set_pump_voltage(sh1106_dev_handle, VPP_9V);
+    sh1106_set_normal_reverse_display(sh1106_dev_handle, DISPLAY_DATA_NORMAL);
+    sh1106_set_entire_display_off_on(sh1106_dev_handle, OFF_STATE);
 }
 
 /* THis function writes initial contents to the display */
-static inline void write_initial_contents_sh1106(i2c_master_dev_handle_t dev_handle)
+static inline void write_initial_contents_sh1106(void)
 {
     uint8_t column_address = COLUMN_ADDRESS_MIN;
     uint8_t page_address = HEADER_PAGE_ADDRESS;
@@ -556,7 +630,7 @@ static inline void write_initial_contents_sh1106(i2c_master_dev_handle_t dev_han
     const char *curr_char = str_1;
     while (0 != *curr_char)
     {
-        sh1106_write_character_big(dev_handle, *curr_char, page_address, &column_address);
+        sh1106_write_character_big(sh1106_dev_handle, *curr_char, page_address, &column_address);
         curr_char++;
     }
 
@@ -569,7 +643,7 @@ static inline void write_initial_contents_sh1106(i2c_master_dev_handle_t dev_han
     curr_char = str_2;
     while (0 != *curr_char)
     {
-        sh1106_write_character_big(dev_handle, *curr_char, page_address, &column_address);
+        sh1106_write_character_big(sh1106_dev_handle, *curr_char, page_address, &column_address);
         curr_char++;
     }
 
@@ -579,7 +653,7 @@ static inline void write_initial_contents_sh1106(i2c_master_dev_handle_t dev_han
     curr_char = str_play;
     while (0 != *curr_char)
     {
-        sh1106_write_character_big(dev_handle, *curr_char, page_address, &column_address);
+        sh1106_write_character_big(sh1106_dev_handle, *curr_char, page_address, &column_address);
         curr_char++;
     }
 }
@@ -587,7 +661,26 @@ static inline void write_initial_contents_sh1106(i2c_master_dev_handle_t dev_han
 /* Initializes encoder pins and GPIO interrupts. */
 static inline void init_encoder_control(void)
 {
-    /* Frequency and playback control encoder */
+    /* Initialize debounce timer */
+    gptimer_config_t timer_config = {
+        .clk_src = GPTIMER_CLK_SRC_DEFAULT,
+        .direction = GPTIMER_COUNT_UP,
+        .resolution_hz = 1000000, // 1MHz, 1 tick=1us
+    };
+    ESP_ERROR_CHECK(gptimer_new_timer(&timer_config, &debounce_timer));
+
+    /* Set callback for the timer */
+    gptimer_event_callbacks_t cb = {
+        .on_alarm = knob_debounce_timer_cb,
+    };
+    ESP_ERROR_CHECK(gptimer_register_event_callbacks(debounce_timer, &cb, NULL));
+    ESP_ERROR_CHECK(gptimer_enable(debounce_timer));
+    gptimer_alarm_config_t alarm_config = {
+        .alarm_count = KNOB_DEBOUNCING_TIME_US, // period = 5ms=5000us
+    };
+    ESP_ERROR_CHECK(gptimer_set_alarm_action(debounce_timer, &alarm_config));
+
+    /* Frequency and playback control encoder configuration */
     gpio_config_t encoder_pins_config = {
         .pin_bit_mask = ((1ULL << GPIO_INPUT_ENCODER_SIA) | (1ULL << GPIO_INPUT_ENCODER_SIB) | (1ULL << GPIO_INPUT_ENCODER_SW)),
         .mode = GPIO_MODE_INPUT,
@@ -597,7 +690,7 @@ static inline void init_encoder_control(void)
     };
     gpio_config(&encoder_pins_config);
 
-    /* Configure interrupt handlers for GPIOs.  */
+    /* Configure interrupt handlers for encoder GPIOs */
     gpio_install_isr_service(0U);
     gpio_isr_handler_add(GPIO_INPUT_ENCODER_SIA, gpio_isr_handler, (void *)GPIO_INPUT_ENCODER_SIA);
     gpio_isr_handler_add(GPIO_INPUT_ENCODER_SIB, gpio_isr_handler, (void *)GPIO_INPUT_ENCODER_SIB);
@@ -677,21 +770,19 @@ void app_main(void)
     ESP_LOGI(I2C_MASTER_TAG, "I2C initialized successfully");
 
     // /* Si4713 */
-    i2c_master_dev_handle_t si4713_dev_handle;
     i2c_add_device(bus_handle, &si4713_dev_handle, SI4173_SENSOR_ADDR);
     ESP_LOGI(SI4713_TAG, "Si4713 added to I2C bus.");
 
-    powerup_si4713(si4713_dev_handle);
-    configure_si4713(si4713_dev_handle);
-    tune_si4713(si4713_dev_handle);
-    audio_dynamic_range_control_si4713(si4713_dev_handle);
+    powerup_si4713();
+    configure_si4713();
+    tune_si4713();
+    audio_dynamic_range_control_si4713();
 
     /* SH1106 */
-    i2c_master_dev_handle_t sh1106_dev_handle;
     i2c_add_device(bus_handle, &sh1106_dev_handle, SH1106_SENSOR_ADDR);
     ESP_LOGI(SH1106_TAG, "SH1106 added to I2C bus.");
 
-    configure_sh1106(sh1106_dev_handle);
+    configure_sh1106();
     sh1106_display_off_on(sh1106_dev_handle, OFF_STATE);
     WAIT_MS(100);
     sh1106_display_off_on(sh1106_dev_handle, ON_STATE);
@@ -702,8 +793,8 @@ void app_main(void)
         sh1106_clear_page(sh1106_dev_handle, i);
     }
 
-    write_initial_contents_sh1106(sh1106_dev_handle);
+    write_initial_contents_sh1106();
     /* Create a task for updating the display contents */
-    xTaskCreate(display_update_task_handler, "display_update_task", 3072U, (void *)sh1106_dev_handle, 10, &display_update_task_handle);
+    xTaskCreate(display_update_task_handler, "display_update_task", 3072U, NULL, 10, &display_update_task_handle);
     init_encoder_control();
 }
