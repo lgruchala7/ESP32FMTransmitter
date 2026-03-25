@@ -54,7 +54,8 @@ void i2c_init(i2c_master_bus_handle_t *bus_handle)
     ESP_ERROR_CHECK(i2c_new_master_bus(&bus_config, bus_handle));
 }
 
-void i2c_add_device(i2c_master_bus_handle_t bus_handle, i2c_master_dev_handle_t *dev_handle, uint16_t dev_addr)
+void i2c_add_device(i2c_master_bus_handle_t bus_handle, i2c_master_dev_handle_t *dev_handle,
+                    uint16_t dev_addr)
 {
     i2c_device_config_t dev_config = {
         .dev_addr_length = I2C_ADDR_BIT_LEN_7,
@@ -75,9 +76,11 @@ void i2c_add_device(i2c_master_bus_handle_t bus_handle, i2c_master_dev_handle_t 
  * @param[in] len Receive buffer len.
  * @return Master write-read operation result.
  */
-esp_err_t i2c_write_read_response(i2c_master_dev_handle_t dev_handle, uint8_t reg_addr, uint8_t *data, size_t len)
+esp_err_t i2c_write_read_response(i2c_master_dev_handle_t dev_handle, uint8_t reg_addr,
+                                  uint8_t *data, size_t len)
 {
-    return i2c_master_transmit_receive(dev_handle, &reg_addr, 1, data, len, I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
+    return i2c_master_transmit_receive(dev_handle, &reg_addr, 1, data, len,
+                                       I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
 }
 
 /**
@@ -104,7 +107,8 @@ esp_err_t i2c_read_response(i2c_master_dev_handle_t dev_handle, uint8_t *data, s
  * @param[in] arg_cnt Number of arguments.
  * @return Master write operation result.
  */
-esp_err_t i2c_send_cmd(i2c_master_dev_handle_t dev_handle, uint8_t cmd, const uint8_t *args, uint8_t arg_cnt)
+esp_err_t i2c_send_cmd(i2c_master_dev_handle_t dev_handle, uint8_t cmd, const uint8_t *args,
+                       uint8_t arg_cnt)
 {
     uint8_t write_buf[arg_cnt + 1U];
     uint8_t write_buf_idx = 0U;
@@ -118,5 +122,6 @@ esp_err_t i2c_send_cmd(i2c_master_dev_handle_t dev_handle, uint8_t cmd, const ui
         write_buf_idx++;
     }
 
-    return i2c_master_transmit(dev_handle, write_buf, sizeof(write_buf), I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
+    return i2c_master_transmit(dev_handle, write_buf, sizeof(write_buf),
+                               I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
 }

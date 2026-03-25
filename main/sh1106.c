@@ -33,17 +33,28 @@
 ===================================================================*/
 
 /* Get bitmap data for a specific ASCII character */
-#define GET_FONT_DATA_SMALL(c) (&sh1106_font_characters_small[(uint8_t)(c) - ASCII_PRINTABLE_CHAR_OFFSET][0])
+#define GET_FONT_DATA_SMALL(c)                                                                     \
+    (&sh1106_font_characters_small[(uint8_t)(c) - ASCII_PRINTABLE_CHAR_OFFSET][0])
 
-#define GET_FONT_DATA_BIG_UPPER(c) (&sh1106_font_characters_big[(uint8_t)(c) - ASCII_PRINTABLE_CHAR_OFFSET][0])
-#define GET_FONT_DATA_BIG_LOWER(c) (&sh1106_font_characters_big[(uint8_t)(c) - ASCII_PRINTABLE_CHAR_OFFSET][FONT_WIDTH_BIG])
+#define GET_FONT_DATA_BIG_UPPER(c)                                                                 \
+    (&sh1106_font_characters_big[(uint8_t)(c) - ASCII_PRINTABLE_CHAR_OFFSET][0])
+#define GET_FONT_DATA_BIG_LOWER(c)                                                                 \
+    (&sh1106_font_characters_big[(uint8_t)(c) - ASCII_PRINTABLE_CHAR_OFFSET][FONT_WIDTH_BIG])
 
-#define GET_FONT_DATA_VERY_BIG_UPPER(c) (&sh1106_font_characters_very_big[(uint8_t)(c) - ASCII_PRINTABLE_CHAR_OFFSET][0])
-#define GET_FONT_DATA_VERY_BIG_MIDDLE(c) (&sh1106_font_characters_very_big[(uint8_t)(c) - ASCII_PRINTABLE_CHAR_OFFSET][FONT_WIDTH_VERY_BIG])
-#define GET_FONT_DATA_VERY_BIG_LOWER(c) (&sh1106_font_characters_very_big[(uint8_t)(c) - ASCII_PRINTABLE_CHAR_OFFSET][FONT_WIDTH_VERY_BIG * 2])
+#define GET_FONT_DATA_VERY_BIG_UPPER(c)                                                            \
+    (&sh1106_font_characters_very_big[(uint8_t)(c) - ASCII_PRINTABLE_CHAR_OFFSET][0])
+#define GET_FONT_DATA_VERY_BIG_MIDDLE(c)                                                           \
+    (&sh1106_font_characters_very_big[(uint8_t)(c) - ASCII_PRINTABLE_CHAR_OFFSET]                  \
+                                     [FONT_WIDTH_VERY_BIG])
+#define GET_FONT_DATA_VERY_BIG_LOWER(c)                                                            \
+    (&sh1106_font_characters_very_big[(uint8_t)(c) - ASCII_PRINTABLE_CHAR_OFFSET]                  \
+                                     [FONT_WIDTH_VERY_BIG * 2])
 
-#define PAGE_ADDRESS_RANGE_CHECK(font_height, address) ((PAGE_ADDRESS_MIN <= (address)) && (PAGE_ADDRESS_MAX - ((font_height) / PAGE_HEIGHT) + 1) >= (address))
-#define COLUMN_ADDRESS_RANGE_CHECK(font_width, address) ((COLUMN_ADDRESS_MIN <= (address)) && ((COLUMN_ADDRESS_MAX - (font_width) + 1) >= (address)))
+#define PAGE_ADDRESS_RANGE_CHECK(font_height, address)                                             \
+    ((PAGE_ADDRESS_MIN <= (address)) &&                                                            \
+     (PAGE_ADDRESS_MAX - ((font_height) / PAGE_HEIGHT) + 1) >= (address))
+#define COLUMN_ADDRESS_RANGE_CHECK(font_width, address)                                            \
+    ((COLUMN_ADDRESS_MIN <= (address)) && ((COLUMN_ADDRESS_MAX - (font_width) + 1) >= (address)))
 
 /*==================================================================
     Local types
@@ -97,7 +108,8 @@ typedef enum
     Local function declarations
 ===================================================================*/
 
-static inline void sh1106_send_cmd(i2c_master_dev_handle_t dev_handle, sh1106_ctrl_byte_t ctrl_byte, const uint8_t *data_bytes, uint8_t data_bytes_cnt);
+static inline void sh1106_send_cmd(i2c_master_dev_handle_t dev_handle, sh1106_ctrl_byte_t ctrl_byte,
+                                   const uint8_t *data_bytes, uint8_t data_bytes_cnt);
 
 /*==================================================================
     Function definitions
@@ -111,7 +123,8 @@ static inline void sh1106_send_cmd(i2c_master_dev_handle_t dev_handle, sh1106_ct
  * @param[in] data_bytes SH1106 command data pointer.
  * @param[in] data_bytes_cnt SH1106 command data count.
  */
-static inline void sh1106_send_cmd(i2c_master_dev_handle_t dev_handle, sh1106_ctrl_byte_t ctrl_byte, const uint8_t *data_bytes, uint8_t data_bytes_cnt)
+static inline void sh1106_send_cmd(i2c_master_dev_handle_t dev_handle, sh1106_ctrl_byte_t ctrl_byte,
+                                   const uint8_t *data_bytes, uint8_t data_bytes_cnt)
 {
     ESP_ERROR_CHECK(i2c_send_cmd(dev_handle, ctrl_byte.value, data_bytes, data_bytes_cnt));
 }
@@ -157,7 +170,8 @@ esp_err_t sh1106_set_page_address(i2c_master_dev_handle_t dev_handle, uint8_t ad
 {
     if ((PAGE_ADDRESS_MIN > address) || (PAGE_ADDRESS_MAX < address))
     {
-        ESP_LOGE(SH1106_TAG, "Invalid page address: %u. Valid range: <%u-%u>.", address, PAGE_ADDRESS_MIN, PAGE_ADDRESS_MAX);
+        ESP_LOGE(SH1106_TAG, "Invalid page address: %u. Valid range: <%u-%u>.", address,
+                 PAGE_ADDRESS_MIN, PAGE_ADDRESS_MAX);
     }
 
     sh1106_ctrl_byte_t ctrl_byte = {.co = CO_LAST_CTRL_BYTE, .dc = DC_CMD_OPERATION};
@@ -173,8 +187,9 @@ esp_err_t sh1106_set_page_address(i2c_master_dev_handle_t dev_handle, uint8_t ad
 /**
  * @brief Specifies current column address of display RAM.
  *
- * @note When the microprocessor repeats to access the display RAM, the column address counter is incremented
- * during each access until address 131 is accessed. The page address is not changed during this time.
+ * @note When the microprocessor repeats to access the display RAM, the column address counter is
+ * incremented during each access until address 131 is accessed. The page address is not changed
+ * during this time.
  *
  * @param[in] dev_handle I2C master device handle.
  * @param[in] address Column address from range <0-127>.
@@ -185,7 +200,8 @@ esp_err_t sh1106_set_column_address(i2c_master_dev_handle_t dev_handle, uint8_t 
 {
     if ((COLUMN_ADDRESS_MIN > address) || (COLUMN_ADDRESS_MAX < address))
     {
-        ESP_LOGE(SH1106_TAG, "Invalid column address: %u. Valid range: <%u-%u>.", address, COLUMN_ADDRESS_MIN, COLUMN_ADDRESS_MAX);
+        ESP_LOGE(SH1106_TAG, "Invalid column address: %u. Valid range: <%u-%u>.", address,
+                 COLUMN_ADDRESS_MIN, COLUMN_ADDRESS_MAX);
     }
 
     sh1106_ctrl_byte_t ctrl_byte = {.co = CO_LAST_CTRL_BYTE, .dc = DC_CMD_OPERATION};
@@ -212,7 +228,8 @@ esp_err_t sh1106_set_column_address(i2c_master_dev_handle_t dev_handle, uint8_t 
  * @return
  *      - ESP_OK: Write Display Data command successful.
  */
-esp_err_t sh1106_write_display_data(i2c_master_dev_handle_t dev_handle, const uint8_t *data, uint8_t data_cnt)
+esp_err_t sh1106_write_display_data(i2c_master_dev_handle_t dev_handle, const uint8_t *data,
+                                    uint8_t data_cnt)
 {
     if (data_cnt > DATA_BUFFER_MAX)
     {
@@ -253,8 +270,9 @@ esp_err_t sh1106_set_segment_remap(i2c_master_dev_handle_t dev_handle, bool adc)
 /**
  * @brief Set the frequency of the internal display clocks (DCLKs).
  *
- * @note DCLK frequency is defined as the divide ratio (1 to 16) used to divide the oscillator frequency. POR is 1. Frame frequency is determined by divide ratio, number of
- * display clocks per row, MUX ratio and oscillator frequency.
+ * @note DCLK frequency is defined as the divide ratio (1 to 16) used to divide the oscillator
+ * frequency. POR is 1. Frame frequency is determined by divide ratio, number of display clocks per
+ * row, MUX ratio and oscillator frequency.
  *
  * @param[in] dev_handle I2C master device handle.
  * @param[in] div_ratio Divide ratio of display clocks (DCLKs).
@@ -262,7 +280,8 @@ esp_err_t sh1106_set_segment_remap(i2c_master_dev_handle_t dev_handle, bool adc)
  * @return
  *      - ESP_OK: Set Clock Divide Ratio/Oscillator Frequency command successful.
  */
-esp_err_t sh1106_set_clock_div_ratio_osc_freq(i2c_master_dev_handle_t dev_handle, uint8_t div_ratio, uint8_t osc_freq)
+esp_err_t sh1106_set_clock_div_ratio_osc_freq(i2c_master_dev_handle_t dev_handle, uint8_t div_ratio,
+                                              uint8_t osc_freq)
 {
     sh1106_ctrl_byte_t ctrl_byte = {.co = CO_LAST_CTRL_BYTE, .dc = DC_CMD_OPERATION};
     uint8_t data[2];
@@ -271,7 +290,8 @@ esp_err_t sh1106_set_clock_div_ratio_osc_freq(i2c_master_dev_handle_t dev_handle
 
     sh1106_send_cmd(dev_handle, ctrl_byte, data, sizeof(data));
 
-    ESP_LOGI(SH1106_TAG, "Divide ratio set to %u, oscillator frequency set to %u.", div_ratio, osc_freq);
+    ESP_LOGI(SH1106_TAG, "Divide ratio set to %u, oscillator frequency set to %u.", div_ratio,
+             osc_freq);
 
     return ESP_OK;
 }
@@ -303,9 +323,9 @@ esp_err_t sh1106_set_multiplex_ratio(i2c_master_dev_handle_t dev_handle, uint8_t
 /**
  * @brief Specifies the mapping of display start line to one of COM0-63.
  *
- * @note For example, to move the COM16 towards the COMO direction for 16 lines, the 6-bit data in the second byte
- * should be given by 010000. To move in the opposite direction by 16 lines, the 6-bit data should be given by (64-16),
- * so the second byte should be 100000.
+ * @note For example, to move the COM16 towards the COMO direction for 16 lines, the 6-bit data in
+ * the second byte should be given by 010000. To move in the opposite direction by 16 lines, the
+ * 6-bit data should be given by (64-16), so the second byte should be 100000.
  *
  * @param[in] dev_handle I2C master device handle.
  * @param[in] offset COMx offset.
@@ -329,8 +349,9 @@ esp_err_t sh1106_set_display_offset(i2c_master_dev_handle_t dev_handle, uint8_t 
 /**
  * @brief Specifies the initial display line or COMO.
  *
- * @note The RAM display data becomes the top line of OLED screen. It is followed by the higher number of lines in ascending order,
- * corresponding to the duty cycle. When this command changes the line address, the smooth scrolling or page change takes place.
+ * @note The RAM display data becomes the top line of OLED screen. It is followed by the higher
+ * number of lines in ascending order, corresponding to the duty cycle. When this command changes
+ * the line address, the smooth scrolling or page change takes place.
  *
  * @param[in] dev_handle I2C master device handle.
  * @param[in] start_line Line number.
@@ -392,7 +413,8 @@ esp_err_t sh1106_set_common_output_scan_dir(i2c_master_dev_handle_t dev_handle, 
 
     sh1106_send_cmd(dev_handle, ctrl_byte, &data, sizeof(data));
 
-    ESP_LOGI(SH1106_TAG, "Common output scan direction set to %s.", ((SCAN_DIR_DESCENDING == direction) ? "descending" : "ascending"));
+    ESP_LOGI(SH1106_TAG, "Common output scan direction set to %s.",
+             ((SCAN_DIR_DESCENDING == direction) ? "descending" : "ascending"));
 
     return ESP_OK;
 }
@@ -414,7 +436,8 @@ esp_err_t sh1106_set_common_pads_hw_config(i2c_master_dev_handle_t dev_handle, u
 
     sh1106_send_cmd(dev_handle, ctrl_byte, data, sizeof(data));
 
-    ESP_LOGI(SH1106_TAG, "Signals pad configuration %s.", ((HW_CONFIG_MODE_ALTERNATIVE == mode) ? "alternative" : "sequential"));
+    ESP_LOGI(SH1106_TAG, "Signals pad configuration %s.",
+             ((HW_CONFIG_MODE_ALTERNATIVE == mode) ? "alternative" : "sequential"));
 
     return ESP_OK;
 }
@@ -429,7 +452,8 @@ esp_err_t sh1106_set_common_pads_hw_config(i2c_master_dev_handle_t dev_handle, u
  * @return
  *      - ESP_OK: Set Contrast Control Register command successful.
  */
-esp_err_t sh1106_set_contrast_ctrl_register(i2c_master_dev_handle_t dev_handle, uint8_t contrast_val)
+esp_err_t sh1106_set_contrast_ctrl_register(i2c_master_dev_handle_t dev_handle,
+                                            uint8_t contrast_val)
 {
     sh1106_ctrl_byte_t ctrl_byte = {.co = CO_LAST_CTRL_BYTE, .dc = DC_CMD_OPERATION};
     uint8_t data[2];
@@ -454,11 +478,13 @@ esp_err_t sh1106_set_contrast_ctrl_register(i2c_master_dev_handle_t dev_handle, 
  * @return
  *      - ESP_OK: Set Discharge/Precharge Period command successful.
  */
-esp_err_t sh1106_set_discharge_precharge_period(i2c_master_dev_handle_t dev_handle, uint8_t period_discharge, uint8_t period_precharge)
+esp_err_t sh1106_set_discharge_precharge_period(i2c_master_dev_handle_t dev_handle,
+                                                uint8_t period_discharge, uint8_t period_precharge)
 {
     if ((0U == period_discharge) || (0U == period_precharge))
     {
-        ESP_LOGE(SH1106_TAG, "Invalid period value: %u (discharge) or %u (precharge)", period_discharge, period_precharge);
+        ESP_LOGE(SH1106_TAG, "Invalid period value: %u (discharge) or %u (precharge)",
+                 period_discharge, period_precharge);
     }
 
     sh1106_ctrl_byte_t ctrl_byte = {.co = CO_LAST_CTRL_BYTE, .dc = DC_CMD_OPERATION};
@@ -468,7 +494,8 @@ esp_err_t sh1106_set_discharge_precharge_period(i2c_master_dev_handle_t dev_hand
 
     sh1106_send_cmd(dev_handle, ctrl_byte, data, sizeof(data));
 
-    ESP_LOGI(SH1106_TAG, "Discharge period set to %u DCLKs, precharge period set to %u DCLKs.", period_discharge, period_precharge);
+    ESP_LOGI(SH1106_TAG, "Discharge period set to %u DCLKs, precharge period set to %u DCLKs.",
+             period_discharge, period_precharge);
 
     return ESP_OK;
 }
@@ -537,7 +564,8 @@ esp_err_t sh1106_set_normal_reverse_display(i2c_master_dev_handle_t dev_handle, 
 
     sh1106_send_cmd(dev_handle, ctrl_byte, &data, sizeof(data));
 
-    ESP_LOGI(SH1106_TAG, "Display set to %s.", ((DISPLAY_DATA_REVERSED == reverse) ? "reverse" : "normal"));
+    ESP_LOGI(SH1106_TAG, "Display set to %s.",
+             ((DISPLAY_DATA_REVERSED == reverse) ? "reverse" : "normal"));
 
     return ESP_OK;
 }
@@ -568,23 +596,27 @@ esp_err_t sh1106_set_entire_display_off_on(i2c_master_dev_handle_t dev_handle, b
  * @param[in] dev_handle I2C master device handle.
  * @param[in] c Character to b e written.
  * @param[in] page_address Write operation page address.
- * @param[in,out] p_column_address Write operation column address pointer. Updated after succesful write.
+ * @param[in,out] p_column_address Write operation column address pointer. Updated after succesful
+ * write.
  * @return
  *      - ESP_OK: Write Small Character command successful.
  *      - ESP_FAIL: Write Small Character command failed.
  */
-esp_err_t sh1106_write_character_small(i2c_master_dev_handle_t dev_handle, char c, uint8_t page_address, uint8_t *p_column_address)
+esp_err_t sh1106_write_character_small(i2c_master_dev_handle_t dev_handle, char c,
+                                       uint8_t page_address, uint8_t *p_column_address)
 {
     esp_err_t ret_val = ESP_FAIL;
 
     if (!PAGE_ADDRESS_RANGE_CHECK(FONT_HEIGHT_SMALL, page_address))
     {
-        ESP_LOGE(SH1106_TAG, "Invalid page address: %u. Valid range: <%u-%u>.", page_address, PAGE_ADDRESS_MIN, PAGE_ADDRESS_MAX);
+        ESP_LOGE(SH1106_TAG, "Invalid page address: %u. Valid range: <%u-%u>.", page_address,
+                 PAGE_ADDRESS_MIN, PAGE_ADDRESS_MAX);
     }
 
     else if (!COLUMN_ADDRESS_RANGE_CHECK(FONT_WIDTH_SMALL, *p_column_address))
     {
-        ESP_LOGE(SH1106_TAG, "Invalid column address: %u. Valid range: <%u-%u>.", *p_column_address, COLUMN_ADDRESS_MIN, (COLUMN_ADDRESS_MAX - FONT_WIDTH_SMALL));
+        ESP_LOGE(SH1106_TAG, "Invalid column address: %u. Valid range: <%u-%u>.", *p_column_address,
+                 COLUMN_ADDRESS_MIN, (COLUMN_ADDRESS_MAX - FONT_WIDTH_SMALL));
     }
     else
     {
@@ -606,22 +638,26 @@ esp_err_t sh1106_write_character_small(i2c_master_dev_handle_t dev_handle, char 
  * @param[in] dev_handle I2C master device handle.
  * @param[in] c Character to b e written.
  * @param[in] page_address Write operation page address.
- * @param[in,out] p_column_address Write operation column address pointer. Updated after succesful write.
+ * @param[in,out] p_column_address Write operation column address pointer. Updated after succesful
+ * write.
  * @return
  *      - ESP_OK: Write Big Character command successful.
  *      - ESP_FAIL: Write Big Character command failed.
  */
-esp_err_t sh1106_write_character_big(i2c_master_dev_handle_t dev_handle, char c, uint8_t page_address, uint8_t *p_column_address)
+esp_err_t sh1106_write_character_big(i2c_master_dev_handle_t dev_handle, char c,
+                                     uint8_t page_address, uint8_t *p_column_address)
 {
     esp_err_t ret_val = ESP_FAIL;
 
     if (!PAGE_ADDRESS_RANGE_CHECK(FONT_HEIGHT_BIG, page_address))
     {
-        ESP_LOGE(SH1106_TAG, "Invalid page address: %u. Valid range: <%u-%u>.", page_address, PAGE_ADDRESS_MIN, (PAGE_ADDRESS_MAX - (FONT_HEIGHT_BIG / PAGE_HEIGHT) + 1));
+        ESP_LOGE(SH1106_TAG, "Invalid page address: %u. Valid range: <%u-%u>.", page_address,
+                 PAGE_ADDRESS_MIN, (PAGE_ADDRESS_MAX - (FONT_HEIGHT_BIG / PAGE_HEIGHT) + 1));
     }
     else if (!COLUMN_ADDRESS_RANGE_CHECK(FONT_WIDTH_BIG, *p_column_address))
     {
-        ESP_LOGE(SH1106_TAG, "Invalid column address: %u. Valid range: <%u-%u>.", *p_column_address, COLUMN_ADDRESS_MIN, (COLUMN_ADDRESS_MAX - FONT_WIDTH_BIG + 1));
+        ESP_LOGE(SH1106_TAG, "Invalid column address: %u. Valid range: <%u-%u>.", *p_column_address,
+                 COLUMN_ADDRESS_MIN, (COLUMN_ADDRESS_MAX - FONT_WIDTH_BIG + 1));
     }
     else
     {
@@ -650,22 +686,26 @@ esp_err_t sh1106_write_character_big(i2c_master_dev_handle_t dev_handle, char c,
  * @param[in] dev_handle I2C master device handle.
  * @param[in] c Character to b e written.
  * @param[in] page_address Write operation page address.
- * @param[in,out] p_column_address Write operation column address pointer. Updated after succesful write.
+ * @param[in,out] p_column_address Write operation column address pointer. Updated after succesful
+ * write.
  * @return
  *      - ESP_OK: Write Very Big Character command successful.
  *      - ESP_FAIL: Write Very Big Character command failed.
  */
-esp_err_t sh1106_write_character_very_big(i2c_master_dev_handle_t dev_handle, char c, uint8_t page_address, uint8_t *p_column_address)
+esp_err_t sh1106_write_character_very_big(i2c_master_dev_handle_t dev_handle, char c,
+                                          uint8_t page_address, uint8_t *p_column_address)
 {
     esp_err_t ret_val = ESP_FAIL;
 
     if (!PAGE_ADDRESS_RANGE_CHECK(FONT_HEIGHT_VERY_BIG, page_address))
     {
-        ESP_LOGE(SH1106_TAG, "Invalid page address: %u. Valid range: <%u-%u>.", page_address, PAGE_ADDRESS_MIN, (PAGE_ADDRESS_MAX - (FONT_HEIGHT_VERY_BIG / PAGE_HEIGHT) + 1));
+        ESP_LOGE(SH1106_TAG, "Invalid page address: %u. Valid range: <%u-%u>.", page_address,
+                 PAGE_ADDRESS_MIN, (PAGE_ADDRESS_MAX - (FONT_HEIGHT_VERY_BIG / PAGE_HEIGHT) + 1));
     }
     else if (!COLUMN_ADDRESS_RANGE_CHECK(FONT_WIDTH_VERY_BIG, *p_column_address))
     {
-        ESP_LOGE(SH1106_TAG, "Invalid column address: %u. Valid range: <%u-%u>.", *p_column_address, COLUMN_ADDRESS_MIN, (COLUMN_ADDRESS_MAX - FONT_WIDTH_VERY_BIG + 1));
+        ESP_LOGE(SH1106_TAG, "Invalid column address: %u. Valid range: <%u-%u>.", *p_column_address,
+                 COLUMN_ADDRESS_MIN, (COLUMN_ADDRESS_MAX - FONT_WIDTH_VERY_BIG + 1));
     }
     else
     {

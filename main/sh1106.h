@@ -11,10 +11,10 @@
     Includes
 ===================================================================*/
 
-#include <inttypes.h>
-#include "sh1106_cfg.h"
-#include "i2c_master_app.h"
 #include "esp_system.h"
+#include "i2c_master_app.h"
+#include "sh1106_cfg.h"
+#include <inttypes.h>
 
 /*==================================================================
     Object-like macros
@@ -108,25 +108,32 @@
 esp_err_t sh1106_display_off_on(i2c_master_dev_handle_t dev_handle, bool state);
 esp_err_t sh1106_set_page_address(i2c_master_dev_handle_t dev_handle, uint8_t address);
 esp_err_t sh1106_set_column_address(i2c_master_dev_handle_t dev_handle, uint8_t address);
-esp_err_t sh1106_write_display_data(i2c_master_dev_handle_t dev_handle, const uint8_t *data, uint8_t data_cnt);
+esp_err_t sh1106_write_display_data(i2c_master_dev_handle_t dev_handle, const uint8_t *data,
+                                    uint8_t data_cnt);
 esp_err_t sh1106_set_segment_remap(i2c_master_dev_handle_t dev_handle, bool adc);
-esp_err_t sh1106_set_clock_div_ratio_osc_freq(i2c_master_dev_handle_t dev_handle, uint8_t div_ratio, uint8_t osc_freq);
+esp_err_t sh1106_set_clock_div_ratio_osc_freq(i2c_master_dev_handle_t dev_handle, uint8_t div_ratio,
+                                              uint8_t osc_freq);
 esp_err_t sh1106_set_multiplex_ratio(i2c_master_dev_handle_t dev_handle, uint8_t mux_ratio);
 esp_err_t sh1106_set_display_offset(i2c_master_dev_handle_t dev_handle, uint8_t offset);
 esp_err_t sh1106_set_display_start_line(i2c_master_dev_handle_t dev_handle, uint8_t start_line);
 esp_err_t sh1106_set_dc_dc_off_on(i2c_master_dev_handle_t dev_handle, bool state);
 esp_err_t sh1106_set_common_output_scan_dir(i2c_master_dev_handle_t dev_handle, uint8_t direction);
 esp_err_t sh1106_set_common_pads_hw_config(i2c_master_dev_handle_t dev_handle, uint8_t mode);
-esp_err_t sh1106_set_contrast_ctrl_register(i2c_master_dev_handle_t dev_handle, uint8_t contrast_val);
-esp_err_t sh1106_set_discharge_precharge_period(i2c_master_dev_handle_t dev_handle, uint8_t period_discharge, uint8_t period_precharge);
+esp_err_t sh1106_set_contrast_ctrl_register(i2c_master_dev_handle_t dev_handle,
+                                            uint8_t contrast_val);
+esp_err_t sh1106_set_discharge_precharge_period(i2c_master_dev_handle_t dev_handle,
+                                                uint8_t period_discharge, uint8_t period_precharge);
 esp_err_t sh1106_set_vcom_deselect_lvl(i2c_master_dev_handle_t dev_handle, uint8_t level);
 esp_err_t sh1106_set_pump_voltage(i2c_master_dev_handle_t dev_handle, uint8_t voltage);
 esp_err_t sh1106_set_normal_reverse_display(i2c_master_dev_handle_t dev_handle, bool reverse);
 esp_err_t sh1106_set_entire_display_off_on(i2c_master_dev_handle_t dev_handle, bool state);
 
-esp_err_t sh1106_write_character_small(i2c_master_dev_handle_t dev_handle, char c, uint8_t page_address, uint8_t *p_column_address);
-esp_err_t sh1106_write_character_big(i2c_master_dev_handle_t dev_handle, char c, uint8_t page_address, uint8_t *p_column_address);
-esp_err_t sh1106_write_character_very_big(i2c_master_dev_handle_t dev_handle, char c, uint8_t page_address, uint8_t *p_column_address);
+esp_err_t sh1106_write_character_small(i2c_master_dev_handle_t dev_handle, char c,
+                                       uint8_t page_address, uint8_t *p_column_address);
+esp_err_t sh1106_write_character_big(i2c_master_dev_handle_t dev_handle, char c,
+                                     uint8_t page_address, uint8_t *p_column_address);
+esp_err_t sh1106_write_character_very_big(i2c_master_dev_handle_t dev_handle, char c,
+                                          uint8_t page_address, uint8_t *p_column_address);
 
 esp_err_t sh1106_clear_page(i2c_master_dev_handle_t dev_handle, uint8_t address);
 

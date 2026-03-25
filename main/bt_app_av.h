@@ -7,14 +7,14 @@
 #ifndef __BT_APP_AV_H__
 #define __BT_APP_AV_H__
 
-#include <stdint.h>
 #include "esp_a2dp_api.h"
 #include "esp_avrc_api.h"
+#include <stdint.h>
 
 /* log tags */
-#define BT_AV_TAG       "BT_AV"
-#define BT_RC_TG_TAG    "RC_TG"
-#define BT_RC_CT_TAG    "RC_CT"
+#define BT_AV_TAG "BT_AV"
+#define BT_RC_TG_TAG "RC_TG"
+#define BT_RC_CT_TAG "RC_CT"
 
 /**
  * @brief  callback function for A2DP sink

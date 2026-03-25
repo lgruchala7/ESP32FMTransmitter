@@ -8,34 +8,34 @@
     Includes
 ===================================================================*/
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <string.h>
-#include <inttypes.h>
+#include "esp_log.h"
+#include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "nvs.h"
 #include "nvs_flash.h"
-#include "esp_system.h"
-#include "esp_log.h"
+#include <inttypes.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 
-#include "esp_bt.h"
-#include "bt_app_core.h"
 #include "bt_app_av.h"
-#include "esp_bt_main.h"
-#include "esp_bt_device.h"
-#include "esp_gap_bt_api.h"
+#include "bt_app_core.h"
 #include "esp_a2dp_api.h"
 #include "esp_avrc_api.h"
+#include "esp_bt.h"
+#include "esp_bt_device.h"
+#include "esp_bt_main.h"
+#include "esp_gap_bt_api.h"
 
-#include "i2c_master_app.h"
 #include "driver/gpio.h"
-#include "si4713.h"
-#include "si4713_cfg.h"
+#include "driver/gptimer.h"
+#include "i2c_master_app.h"
 #include "sh1106.h"
 #include "sh1106_cfg.h"
-#include "driver/gptimer.h"
+#include "si4713.h"
+#include "si4713_cfg.h"
 
 /*==================================================================
     Object-like macros
@@ -53,7 +53,8 @@
 #define GPIO_LOW 0
 #define GPIO_HIGH 1
 
-/* Value by which the tx frequency is decreased or increased with every encoder step (in 10kHz units) */
+/* Value by which the tx frequency is decreased or increased with every encoder step (in 10kHz
+ * units) */
 #define ENCODER_STEP_VAL 10U
 #define KNOB_DEBOUNCING_TIME_US 5000U
 
@@ -65,14 +66,14 @@
 ===================================================================*/
 
 /* Waits for a specific time in ms  */
-#define WAIT_MS(time)                                   \
-    do                                                  \
-    {                                                   \
-        TickType_t start = xTaskGetTickCount();         \
-        TickType_t timeout = pdMS_TO_TICKS((time));     \
-        while (xTaskGetTickCount() < (start + timeout)) \
-        {                                               \
-        }                                               \
+#define WAIT_MS(time)                                                                              \
+    do                                                                                             \
+    {                                                                                              \
+        TickType_t start = xTaskGetTickCount();                                                    \
+        TickType_t timeout = pdMS_TO_TICKS((time));                                                \
+        while (xTaskGetTickCount() < (start + timeout))                                            \
+        {                                                                                          \
+        }                                                                                          \
     } while (0)
 
 /* Converts int value to its corresponding ASCII code value e.g. 0 -> '0' */
@@ -148,7 +149,8 @@ static void bt_app_dev_cb(esp_bt_dev_cb_event_t event, esp_bt_dev_cb_param_t *pa
 static void bt_app_gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *param);
 static void bt_av_hdl_stack_evt(uint16_t event, void *p_param);
 static void gpio_isr_handler(void *arg);
-static bool knob_debounce_timer_cb(gptimer_handle_t timer, const gptimer_alarm_event_data_t *edata, void *user_data);
+static bool knob_debounce_timer_cb(gptimer_handle_t timer, const gptimer_alarm_event_data_t *edata,
+                                   void *user_data);
 
 /* Auxiliary functions */
 static char *bda2str(uint8_t *bda, char *str, size_t size);
@@ -174,12 +176,14 @@ static void IRAM_ATTR gpio_isr_handler(void *arg)
 
     if (0U == timer_count)
     {
-        if ((GPIO_INPUT_ENCODER_SIA == gpio_num) && (GPIO_HIGH == gpio_get_level(GPIO_INPUT_ENCODER_SIB)))
+        if ((GPIO_INPUT_ENCODER_SIA == gpio_num) &&
+            (GPIO_HIGH == gpio_get_level(GPIO_INPUT_ENCODER_SIB)))
         {
             knob_debounce_event = TX_FREQ_DECREASE_EVT;
             gptimer_start(debounce_timer);
         }
-        else if ((GPIO_INPUT_ENCODER_SIB == gpio_num) && (GPIO_HIGH == gpio_get_level(GPIO_INPUT_ENCODER_SIA)))
+        else if ((GPIO_INPUT_ENCODER_SIB == gpio_num) &&
+                 (GPIO_HIGH == gpio_get_level(GPIO_INPUT_ENCODER_SIA)))
         {
             knob_debounce_event = TX_FREQ_INCREASE_EVT;
             gptimer_start(debounce_timer);
@@ -200,41 +204,47 @@ static void IRAM_ATTR gpio_isr_handler(void *arg)
 /**
  * @brief Callback for debounce timer alarm event.
  *
- * This timer callback function performs knob debounce check. If a knob event is confirmed, the display task is notified.
+ * This timer callback function performs knob debounce check. If a knob event is confirmed, the
+ * display task is notified.
  *
  * @param[in] timer Timer handle.
  * @param[in] edata Alarm event data, fed by driver.
  * @param[in] user_data User data.
  */
-static bool IRAM_ATTR knob_debounce_timer_cb(gptimer_handle_t timer, const gptimer_alarm_event_data_t *edata, void *user_data)
+static bool IRAM_ATTR knob_debounce_timer_cb(gptimer_handle_t timer,
+                                             const gptimer_alarm_event_data_t *edata,
+                                             void *user_data)
 {
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
     switch (knob_debounce_event)
     {
-    case TX_FREQ_DECREASE_EVT:
-        if (GPIO_LOW == gpio_get_level(GPIO_INPUT_ENCODER_SIA))
-        {
-            vTaskNotifyGiveIndexedFromISR(display_update_task_handle, TX_FREQ_DECREASE_EVT, &xHigherPriorityTaskWoken);
-        }
-        break;
+        case TX_FREQ_DECREASE_EVT:
+            if (GPIO_LOW == gpio_get_level(GPIO_INPUT_ENCODER_SIA))
+            {
+                vTaskNotifyGiveIndexedFromISR(display_update_task_handle, TX_FREQ_DECREASE_EVT,
+                                              &xHigherPriorityTaskWoken);
+            }
+            break;
 
-    case TX_FREQ_INCREASE_EVT:
-        if (GPIO_LOW == gpio_get_level(GPIO_INPUT_ENCODER_SIB))
-        {
-            vTaskNotifyGiveIndexedFromISR(display_update_task_handle, TX_FREQ_INCREASE_EVT, &xHigherPriorityTaskWoken);
-        }
-        break;
+        case TX_FREQ_INCREASE_EVT:
+            if (GPIO_LOW == gpio_get_level(GPIO_INPUT_ENCODER_SIB))
+            {
+                vTaskNotifyGiveIndexedFromISR(display_update_task_handle, TX_FREQ_INCREASE_EVT,
+                                              &xHigherPriorityTaskWoken);
+            }
+            break;
 
-    case PLAYBACK_STATE_CHANGE_EVT:
-        if (GPIO_LOW == gpio_get_level(GPIO_INPUT_ENCODER_SW))
-        {
-            vTaskNotifyGiveIndexedFromISR(display_update_task_handle, PLAYBACK_STATE_CHANGE_EVT, &xHigherPriorityTaskWoken);
-        }
-        break;
+        case PLAYBACK_STATE_CHANGE_EVT:
+            if (GPIO_LOW == gpio_get_level(GPIO_INPUT_ENCODER_SW))
+            {
+                vTaskNotifyGiveIndexedFromISR(display_update_task_handle, PLAYBACK_STATE_CHANGE_EVT,
+                                              &xHigherPriorityTaskWoken);
+            }
+            break;
 
-    default:
-        break;
+        default:
+            break;
     }
 
     gptimer_stop(debounce_timer);
@@ -246,7 +256,8 @@ static bool IRAM_ATTR knob_debounce_timer_cb(gptimer_handle_t timer, const gptim
 /**
  * @brief Display refresh task handler.
  *
- * This function waits for encoder related notifications and updates display contents if a change has occurred.
+ * This function waits for encoder related notifications and updates display contents if a change
+ * has occurred.
  *
  * @param[in] arg Task argument - not used.
  */
@@ -273,7 +284,8 @@ static void display_update_task_handler(void *arg)
 
             write_display_segment(PLAYBACK_STATE_SEG, curr_icon);
 
-            ESP_LOGI(ENCODER_TAG, "Playback state changed to %s.", (ON_STATE == playback_state) ? "PLAY" : "PAUSE");
+            ESP_LOGI(ENCODER_TAG, "Playback state changed to %s.",
+                     (ON_STATE == playback_state) ? "PLAY" : "PAUSE");
         }
 
         if (0U != ulTaskNotifyTakeIndexed(TX_FREQ_INCREASE_EVT, pdTRUE, pdMS_TO_TICKS(10)))
@@ -315,7 +327,8 @@ static void display_update_task_handler(void *arg)
 
             integral_part_digits[0] = integral_part / 100U;
             integral_part_digits[1] = (integral_part / 10U) - (integral_part_digits[0] * 10U);
-            integral_part_digits[2] = integral_part - (integral_part_digits[0] * 100U) - (integral_part_digits[1] * 10U);
+            integral_part_digits[2] =
+                integral_part - (integral_part_digits[0] * 100U) - (integral_part_digits[1] * 10U);
 
             char display_data[7];
             int display_data_idx = 0;
@@ -372,8 +385,7 @@ static char *bda2str(uint8_t *bda, char *str, size_t size)
     }
 
     uint8_t *p = bda;
-    sprintf(str, "%02x:%02x:%02x:%02x:%02x:%02x",
-            p[0], p[1], p[2], p[3], p[4], p[5]);
+    sprintf(str, "%02x:%02x:%02x:%02x:%02x:%02x", p[0], p[1], p[2], p[3], p[4], p[5]);
     return str;
 }
 
@@ -382,23 +394,24 @@ static void bt_app_dev_cb(esp_bt_dev_cb_event_t event, esp_bt_dev_cb_param_t *pa
 {
     switch (event)
     {
-    case ESP_BT_DEV_NAME_RES_EVT:
-    {
-        if (param->name_res.status == ESP_BT_STATUS_SUCCESS)
+        case ESP_BT_DEV_NAME_RES_EVT:
         {
-            ESP_LOGI(BT_AV_TAG, "Get local device name success: %s", param->name_res.name);
+            if (param->name_res.status == ESP_BT_STATUS_SUCCESS)
+            {
+                ESP_LOGI(BT_AV_TAG, "Get local device name success: %s", param->name_res.name);
+            }
+            else
+            {
+                ESP_LOGE(BT_AV_TAG, "Get local device name failed, status: %d",
+                         param->name_res.status);
+            }
+            break;
         }
-        else
+        default:
         {
-            ESP_LOGE(BT_AV_TAG, "Get local device name failed, status: %d", param->name_res.status);
+            ESP_LOGI(BT_AV_TAG, "event: %d", event);
+            break;
         }
-        break;
-    }
-    default:
-    {
-        ESP_LOGI(BT_AV_TAG, "event: %d", event);
-        break;
-    }
     }
 }
 
@@ -409,69 +422,79 @@ static void bt_app_gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *pa
 
     switch (event)
     {
-    /* when authentication completed, this event comes */
-    case ESP_BT_GAP_AUTH_CMPL_EVT:
-    {
-        if (param->auth_cmpl.stat == ESP_BT_STATUS_SUCCESS)
+        /* when authentication completed, this event comes */
+        case ESP_BT_GAP_AUTH_CMPL_EVT:
         {
-            ESP_LOGI(BT_AV_TAG, "authentication success: %s", param->auth_cmpl.device_name);
-            ESP_LOG_BUFFER_HEX(BT_AV_TAG, param->auth_cmpl.bda, ESP_BD_ADDR_LEN);
+            if (param->auth_cmpl.stat == ESP_BT_STATUS_SUCCESS)
+            {
+                ESP_LOGI(BT_AV_TAG, "authentication success: %s", param->auth_cmpl.device_name);
+                ESP_LOG_BUFFER_HEX(BT_AV_TAG, param->auth_cmpl.bda, ESP_BD_ADDR_LEN);
+            }
+            else
+            {
+                ESP_LOGE(BT_AV_TAG, "authentication failed, status: %d", param->auth_cmpl.stat);
+            }
+            ESP_LOGI(BT_AV_TAG, "link key type of current link is: %d", param->auth_cmpl.lk_type);
+            break;
         }
-        else
+        case ESP_BT_GAP_ENC_CHG_EVT:
         {
-            ESP_LOGE(BT_AV_TAG, "authentication failed, status: %d", param->auth_cmpl.stat);
+            char *str_enc[3] = {"OFF", "E0", "AES"};
+            bda = (uint8_t *)param->enc_chg.bda;
+            ESP_LOGI(BT_AV_TAG, "Encryption mode to [%02x:%02x:%02x:%02x:%02x:%02x] changed to %s",
+                     bda[0], bda[1], bda[2], bda[3], bda[4], bda[5],
+                     str_enc[param->enc_chg.enc_mode]);
+            break;
         }
-        ESP_LOGI(BT_AV_TAG, "link key type of current link is: %d", param->auth_cmpl.lk_type);
-        break;
-    }
-    case ESP_BT_GAP_ENC_CHG_EVT:
-    {
-        char *str_enc[3] = {"OFF", "E0", "AES"};
-        bda = (uint8_t *)param->enc_chg.bda;
-        ESP_LOGI(BT_AV_TAG, "Encryption mode to [%02x:%02x:%02x:%02x:%02x:%02x] changed to %s",
-                 bda[0], bda[1], bda[2], bda[3], bda[4], bda[5], str_enc[param->enc_chg.enc_mode]);
-        break;
-    }
 
 #if (CONFIG_EXAMPLE_A2DP_SINK_SSP_ENABLED == true)
-    /* when Security Simple Pairing user confirmation requested, this event comes */
-    case ESP_BT_GAP_CFM_REQ_EVT:
-        ESP_LOGI(BT_AV_TAG, "ESP_BT_GAP_CFM_REQ_EVT Please compare the numeric value: %06" PRIu32, param->cfm_req.num_val);
-        esp_bt_gap_ssp_confirm_reply(param->cfm_req.bda, true);
-        break;
-    /* when Security Simple Pairing passkey notified, this event comes */
-    case ESP_BT_GAP_KEY_NOTIF_EVT:
-        ESP_LOGI(BT_AV_TAG, "ESP_BT_GAP_KEY_NOTIF_EVT passkey: %06" PRIu32, param->key_notif.passkey);
-        break;
-    /* when Security Simple Pairing passkey requested, this event comes */
-    case ESP_BT_GAP_KEY_REQ_EVT:
-        ESP_LOGI(BT_AV_TAG, "ESP_BT_GAP_KEY_REQ_EVT Please enter passkey!");
-        break;
+        /* when Security Simple Pairing user confirmation requested, this event comes */
+        case ESP_BT_GAP_CFM_REQ_EVT:
+            ESP_LOGI(BT_AV_TAG,
+                     "ESP_BT_GAP_CFM_REQ_EVT Please compare the numeric value: %06" PRIu32,
+                     param->cfm_req.num_val);
+            esp_bt_gap_ssp_confirm_reply(param->cfm_req.bda, true);
+            break;
+        /* when Security Simple Pairing passkey notified, this event comes */
+        case ESP_BT_GAP_KEY_NOTIF_EVT:
+            ESP_LOGI(BT_AV_TAG, "ESP_BT_GAP_KEY_NOTIF_EVT passkey: %06" PRIu32,
+                     param->key_notif.passkey);
+            break;
+        /* when Security Simple Pairing passkey requested, this event comes */
+        case ESP_BT_GAP_KEY_REQ_EVT:
+            ESP_LOGI(BT_AV_TAG, "ESP_BT_GAP_KEY_REQ_EVT Please enter passkey!");
+            break;
 #endif
 
-    /* when GAP mode changed, this event comes */
-    case ESP_BT_GAP_MODE_CHG_EVT:
-        ESP_LOGI(BT_AV_TAG, "ESP_BT_GAP_MODE_CHG_EVT mode: %d, interval: %.2f ms",
-                 param->mode_chg.mode, param->mode_chg.interval * 0.625);
-        break;
-    /* when ACL connection completed, this event comes */
-    case ESP_BT_GAP_ACL_CONN_CMPL_STAT_EVT:
-        bda = (uint8_t *)param->acl_conn_cmpl_stat.bda;
-        ESP_LOGI(BT_AV_TAG, "ESP_BT_GAP_ACL_CONN_CMPL_STAT_EVT Connected to [%02x:%02x:%02x:%02x:%02x:%02x], status: 0x%x",
-                 bda[0], bda[1], bda[2], bda[3], bda[4], bda[5], param->acl_conn_cmpl_stat.stat);
-        break;
-    /* when ACL disconnection completed, this event comes */
-    case ESP_BT_GAP_ACL_DISCONN_CMPL_STAT_EVT:
-        bda = (uint8_t *)param->acl_disconn_cmpl_stat.bda;
-        ESP_LOGI(BT_AV_TAG, "ESP_BT_GAP_ACL_DISC_CMPL_STAT_EVT Disconnected from [%02x:%02x:%02x:%02x:%02x:%02x], reason: 0x%x",
-                 bda[0], bda[1], bda[2], bda[3], bda[4], bda[5], param->acl_disconn_cmpl_stat.reason);
-        break;
-    /* others */
-    default:
-    {
-        ESP_LOGI(BT_AV_TAG, "event: %d", event);
-        break;
-    }
+        /* when GAP mode changed, this event comes */
+        case ESP_BT_GAP_MODE_CHG_EVT:
+            ESP_LOGI(BT_AV_TAG, "ESP_BT_GAP_MODE_CHG_EVT mode: %d, interval: %.2f ms",
+                     param->mode_chg.mode, param->mode_chg.interval * 0.625);
+            break;
+        /* when ACL connection completed, this event comes */
+        case ESP_BT_GAP_ACL_CONN_CMPL_STAT_EVT:
+            bda = (uint8_t *)param->acl_conn_cmpl_stat.bda;
+            ESP_LOGI(BT_AV_TAG,
+                     "ESP_BT_GAP_ACL_CONN_CMPL_STAT_EVT Connected to "
+                     "[%02x:%02x:%02x:%02x:%02x:%02x], status: 0x%x",
+                     bda[0], bda[1], bda[2], bda[3], bda[4], bda[5],
+                     param->acl_conn_cmpl_stat.stat);
+            break;
+        /* when ACL disconnection completed, this event comes */
+        case ESP_BT_GAP_ACL_DISCONN_CMPL_STAT_EVT:
+            bda = (uint8_t *)param->acl_disconn_cmpl_stat.bda;
+            ESP_LOGI(BT_AV_TAG,
+                     "ESP_BT_GAP_ACL_DISC_CMPL_STAT_EVT Disconnected from "
+                     "[%02x:%02x:%02x:%02x:%02x:%02x], reason: 0x%x",
+                     bda[0], bda[1], bda[2], bda[3], bda[4], bda[5],
+                     param->acl_disconn_cmpl_stat.reason);
+            break;
+        /* others */
+        default:
+        {
+            ESP_LOGI(BT_AV_TAG, "event: %d", event);
+            break;
+        }
     }
 }
 
@@ -482,68 +505,68 @@ static void bt_av_hdl_stack_evt(uint16_t event, void *p_param)
 
     switch (event)
     {
-    /* when do the stack up, this event comes */
-    case BT_APP_EVT_STACK_UP:
-    {
-        esp_bt_gap_set_device_name(local_device_name);
-        esp_bt_dev_register_callback(bt_app_dev_cb);
-        esp_bt_gap_register_callback(bt_app_gap_cb);
+        /* when do the stack up, this event comes */
+        case BT_APP_EVT_STACK_UP:
+        {
+            esp_bt_gap_set_device_name(local_device_name);
+            esp_bt_dev_register_callback(bt_app_dev_cb);
+            esp_bt_gap_register_callback(bt_app_gap_cb);
 
-        esp_avrc_ct_register_callback(bt_app_rc_ct_cb);
-        assert(esp_avrc_ct_init() == ESP_OK);
-        esp_avrc_tg_register_callback(bt_app_rc_tg_cb);
-        assert(esp_avrc_tg_init() == ESP_OK);
+            esp_avrc_ct_register_callback(bt_app_rc_ct_cb);
+            assert(esp_avrc_ct_init() == ESP_OK);
+            esp_avrc_tg_register_callback(bt_app_rc_tg_cb);
+            assert(esp_avrc_tg_init() == ESP_OK);
 
-        esp_avrc_rn_evt_cap_mask_t evt_set = {0};
-        esp_avrc_rn_evt_bit_mask_operation(ESP_AVRC_BIT_MASK_OP_SET, &evt_set, ESP_AVRC_RN_VOLUME_CHANGE);
-        assert(esp_avrc_tg_set_rn_evt_cap(&evt_set) == ESP_OK);
+            esp_avrc_rn_evt_cap_mask_t evt_set = {0};
+            esp_avrc_rn_evt_bit_mask_operation(ESP_AVRC_BIT_MASK_OP_SET, &evt_set,
+                                               ESP_AVRC_RN_VOLUME_CHANGE);
+            assert(esp_avrc_tg_set_rn_evt_cap(&evt_set) == ESP_OK);
 
-        esp_a2d_register_callback(&bt_app_a2d_cb);
-        assert(esp_a2d_sink_init() == ESP_OK);
+            esp_a2d_register_callback(&bt_app_a2d_cb);
+            assert(esp_a2d_sink_init() == ESP_OK);
 
 #if CONFIG_EXAMPLE_A2DP_SINK_USE_EXTERNAL_CODEC == FALSE
-        esp_a2d_sink_register_data_callback(bt_app_a2d_data_cb);
+            esp_a2d_sink_register_data_callback(bt_app_a2d_data_cb);
 #else
-        esp_a2d_mcc_t mcc = {0};
-        mcc.type = ESP_A2D_MCT_SBC;
-        mcc.cie.sbc_info.samp_freq = 0xf;
-        mcc.cie.sbc_info.ch_mode = 0xf;
-        mcc.cie.sbc_info.block_len = 0xf;
-        mcc.cie.sbc_info.num_subbands = 0x3;
-        mcc.cie.sbc_info.alloc_mthd = 0x3;
-        mcc.cie.sbc_info.max_bitpool = 250;
-        mcc.cie.sbc_info.min_bitpool = 2;
-        /* register stream end point, only support mSBC currently */
-        esp_a2d_sink_register_stream_endpoint(0, &mcc);
-        esp_a2d_sink_register_audio_data_callback(bt_app_a2d_audio_data_cb);
+            esp_a2d_mcc_t mcc = {0};
+            mcc.type = ESP_A2D_MCT_SBC;
+            mcc.cie.sbc_info.samp_freq = 0xf;
+            mcc.cie.sbc_info.ch_mode = 0xf;
+            mcc.cie.sbc_info.block_len = 0xf;
+            mcc.cie.sbc_info.num_subbands = 0x3;
+            mcc.cie.sbc_info.alloc_mthd = 0x3;
+            mcc.cie.sbc_info.max_bitpool = 250;
+            mcc.cie.sbc_info.min_bitpool = 2;
+            /* register stream end point, only support mSBC currently */
+            esp_a2d_sink_register_stream_endpoint(0, &mcc);
+            esp_a2d_sink_register_audio_data_callback(bt_app_a2d_audio_data_cb);
 #endif
-        /* Get the default value of the delay value */
-        esp_a2d_sink_get_delay_value();
-        /* Get local device name */
-        esp_bt_gap_get_device_name();
+            /* Get the default value of the delay value */
+            esp_a2d_sink_get_delay_value();
+            /* Get local device name */
+            esp_bt_gap_get_device_name();
 
-        /* set discoverable and connectable mode, wait to be connected */
-        esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
-        break;
-    }
-    /* others */
-    default:
-        ESP_LOGE(BT_AV_TAG, "%s unhandled event: %d", __func__, event);
-        break;
+            /* set discoverable and connectable mode, wait to be connected */
+            esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
+            break;
+        }
+        /* others */
+        default:
+            ESP_LOGE(BT_AV_TAG, "%s unhandled event: %d", __func__, event);
+            break;
     }
 }
 
 /* Si4713 powerup function */
 static inline void powerup_si4713(void)
 {
-    gpio_config_t rst_pin_config =
-        {
-            .pin_bit_mask = (1ULL << GPIO_OUTPUT_SI4713_RST),
-            .mode = GPIO_MODE_OUTPUT,
-            .pull_up_en = GPIO_PULLUP_DISABLE,
-            .pull_down_en = GPIO_PULLDOWN_DISABLE,
-            .intr_type = GPIO_INTR_DISABLE,
-        };
+    gpio_config_t rst_pin_config = {
+        .pin_bit_mask = (1ULL << GPIO_OUTPUT_SI4713_RST),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
     gpio_config(&rst_pin_config);
 
     /* put si4713 in reset */
@@ -600,15 +623,18 @@ static inline void audio_dynamic_range_control_si4713(void)
 
     si4713_set_property(si4713_dev_handle, TX_ACOMP_THRESHOLD, TX_ACOMP_THRESHOLD_DEFAULT_VAL);
     si4713_set_property(si4713_dev_handle, TX_ACOMP_GAIN, TX_ACOMP_GAIN_DEFAULT_VAL);
-    si4713_set_property(si4713_dev_handle, TX_ACOMP_RELEASE_TIME, TX_ACOMP_RELEASE_TIME_DEFAULT_VAL);
+    si4713_set_property(si4713_dev_handle, TX_ACOMP_RELEASE_TIME,
+                        TX_ACOMP_RELEASE_TIME_DEFAULT_VAL);
     si4713_set_property(si4713_dev_handle, TX_ACOMP_ATTACK_TIME, TX_ACOMP_ATTACK_TIME_DEFAULT_VAL);
     si4713_set_property(si4713_dev_handle, TX_ACOMP_ENABLE, TX_ACOMP_ENABLE_DEFAULT_VAL);
-    si4713_set_property(si4713_dev_handle, TX_LIMITER_RELEASE_TIME, TX_LIMITER_RELEASE_TIME_DEFAULT_VAL);
+    si4713_set_property(si4713_dev_handle, TX_LIMITER_RELEASE_TIME,
+                        TX_LIMITER_RELEASE_TIME_DEFAULT_VAL);
     si4713_set_property(si4713_dev_handle, TX_ASQ_LEVEL_LOW, TX_ASQ_LEVEL_LOW_DEFAULT_VAL);
     si4713_set_property(si4713_dev_handle, TX_ASQ_DURATION_LOW, TX_ASQ_DURATION_LOW_DEFAULT_VAL);
     si4713_set_property(si4713_dev_handle, TX_ASQ_LEVEL_HIGH, TX_ASQ_LEVEL_HIGH_DEFAULT_VAL);
     si4713_set_property(si4713_dev_handle, TX_ASQ_DURATION_HIGH, TX_ASQ_DURATION_HIGH_DEFAULT_VAL);
-    si4713_set_property(si4713_dev_handle, TX_ASQ_INTERRUPT_SOURCE, TX_ASQ_INTERRUPT_SOURCE_DEFAULT_VAL);
+    si4713_set_property(si4713_dev_handle, TX_ASQ_INTERRUPT_SOURCE,
+                        TX_ASQ_INTERRUPT_SOURCE_DEFAULT_VAL);
     status_expected = (uint8_t)((1U << STATUS_CTS_BIT_POS) | (1U << STATUS_ASQINT_BIT_POS));
     si4713_get_int_status(si4713_dev_handle, status_expected, 1U);
     si4713_tx_asq_status(si4713_dev_handle); // to clean the ASQINT bit
@@ -627,7 +653,8 @@ static inline void configure_sh1106(void)
     sh1106_set_common_output_scan_dir(sh1106_dev_handle, SCAN_DIR_DESCENDING);
     sh1106_set_common_pads_hw_config(sh1106_dev_handle, HW_CONFIG_MODE_ALTERNATIVE);
     sh1106_set_contrast_ctrl_register(sh1106_dev_handle, DISPLAY_CONTRAST_VERY_HIGH);
-    sh1106_set_discharge_precharge_period(sh1106_dev_handle, DISCHARGE_PERIOD_DCLK(1U), PRECHARGE_PERIOD_DCLK(15U));
+    sh1106_set_discharge_precharge_period(sh1106_dev_handle, DISCHARGE_PERIOD_DCLK(1U),
+                                          PRECHARGE_PERIOD_DCLK(15U));
     sh1106_set_vcom_deselect_lvl(sh1106_dev_handle, 100U);
     sh1106_set_pump_voltage(sh1106_dev_handle, VPP_9V);
     sh1106_set_normal_reverse_display(sh1106_dev_handle, DISPLAY_DATA_NORMAL);
@@ -639,7 +666,8 @@ static inline void write_initial_display_contents(void)
 {
     /* TX Frequency value */
     char display_data[7];
-    sprintf(display_data, "%d.%d", (TX_TUNE_FREQ_DEFAULT_VAL / 100), (TX_TUNE_FREQ_DEFAULT_VAL - (TX_TUNE_FREQ_DEFAULT_VAL / 100) * 100));
+    sprintf(display_data, "%d.%d", (TX_TUNE_FREQ_DEFAULT_VAL / 100),
+            (TX_TUNE_FREQ_DEFAULT_VAL - (TX_TUNE_FREQ_DEFAULT_VAL / 100) * 100));
     ESP_LOGI(SH1106_TAG, "Writing frequency: %s", display_data);
     write_display_segment(TX_FREQ_SEG, (uint8_t *)display_data);
 
@@ -673,7 +701,8 @@ static inline void init_encoder_control(void)
 
     /* Frequency and playback control encoder configuration */
     gpio_config_t encoder_pins_config = {
-        .pin_bit_mask = ((1ULL << GPIO_INPUT_ENCODER_SIA) | (1ULL << GPIO_INPUT_ENCODER_SIB) | (1ULL << GPIO_INPUT_ENCODER_SW)),
+        .pin_bit_mask = ((1ULL << GPIO_INPUT_ENCODER_SIA) | (1ULL << GPIO_INPUT_ENCODER_SIB) |
+                         (1ULL << GPIO_INPUT_ENCODER_SW)),
         .mode = GPIO_MODE_INPUT,
         .pull_up_en = GPIO_PULLUP_DISABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
@@ -700,38 +729,41 @@ static void write_display_segment(int segment, const uint8_t *data)
 
         switch (font_size)
         {
-        case FONT_HEIGHT_SMALL:
-        {
-            while ('\0' != *curr_char)
+            case FONT_HEIGHT_SMALL:
             {
-                sh1106_write_character_small(sh1106_dev_handle, *curr_char, page_address, &column_address);
-                curr_char++;
+                while ('\0' != *curr_char)
+                {
+                    sh1106_write_character_small(sh1106_dev_handle, *curr_char, page_address,
+                                                 &column_address);
+                    curr_char++;
+                }
+                break;
             }
-            break;
-        }
 
-        case FONT_HEIGHT_BIG:
-        {
-            while ('\0' != *curr_char)
+            case FONT_HEIGHT_BIG:
             {
-                sh1106_write_character_big(sh1106_dev_handle, *curr_char, page_address, &column_address);
-                curr_char++;
+                while ('\0' != *curr_char)
+                {
+                    sh1106_write_character_big(sh1106_dev_handle, *curr_char, page_address,
+                                               &column_address);
+                    curr_char++;
+                }
+                break;
             }
-            break;
-        }
 
-        case FONT_HEIGHT_VERY_BIG:
-        {
-            while ('\0' != *curr_char)
+            case FONT_HEIGHT_VERY_BIG:
             {
-                sh1106_write_character_very_big(sh1106_dev_handle, *curr_char, page_address, &column_address);
-                curr_char++;
+                while ('\0' != *curr_char)
+                {
+                    sh1106_write_character_very_big(sh1106_dev_handle, *curr_char, page_address,
+                                                    &column_address);
+                    curr_char++;
+                }
+                break;
             }
-            break;
-        }
 
-        default:
-            break;
+            default:
+                break;
         }
     }
     else if (PLAYBACK_STATE_SEG == segment)
@@ -754,7 +786,8 @@ static void write_display_segment(int segment, const uint8_t *data)
 
         while ('\0' != *curr_char)
         {
-            sh1106_write_character_big(sh1106_dev_handle, *curr_char, page_address, &column_address);
+            sh1106_write_character_big(sh1106_dev_handle, *curr_char, page_address,
+                                       &column_address);
             curr_char++;
         }
     }
@@ -826,7 +859,8 @@ void app_main(void)
     pin_code[3] = '4';
     esp_bt_gap_set_pin(pin_type, 4, pin_code);
 
-    ESP_LOGI(BT_AV_TAG, "Own address:[%s]", bda2str((uint8_t *)esp_bt_dev_get_address(), bda_str, sizeof(bda_str)));
+    ESP_LOGI(BT_AV_TAG, "Own address:[%s]",
+             bda2str((uint8_t *)esp_bt_dev_get_address(), bda_str, sizeof(bda_str)));
     bt_app_task_start_up();
     /* bluetooth device name, connection mode and profile set up */
     bt_app_work_dispatch(bt_av_hdl_stack_evt, BT_APP_EVT_STACK_UP, NULL, 0, NULL);
@@ -862,6 +896,7 @@ void app_main(void)
 
     write_initial_display_contents();
     /* Create a task for updating the display contents */
-    xTaskCreate(display_update_task_handler, "display_update_task", 3072U, NULL, 10, &display_update_task_handle);
+    xTaskCreate(display_update_task_handler, "display_update_task", 3072U, NULL, 10,
+                &display_update_task_handle);
     init_encoder_control();
 }

@@ -74,9 +74,14 @@
     Exported objects
 ===================================================================*/
 
-extern const uint8_t sh1106_font_characters_small[ASCII_PRINTABLE_CHAR_COUNT][FONT_WIDTH_SMALL * (FONT_HEIGHT_SMALL / PAGE_HEIGHT)];
-extern const uint8_t sh1106_font_characters_big[ASCII_PRINTABLE_CHAR_COUNT][FONT_WIDTH_BIG * (FONT_HEIGHT_BIG / PAGE_HEIGHT)];
-extern const uint8_t sh1106_font_characters_very_big[ASCII_PRINTABLE_CHAR_COUNT][FONT_WIDTH_VERY_BIG * (FONT_HEIGHT_VERY_BIG / PAGE_HEIGHT)];
+extern const uint8_t
+    sh1106_font_characters_small[ASCII_PRINTABLE_CHAR_COUNT]
+                                [FONT_WIDTH_SMALL * (FONT_HEIGHT_SMALL / PAGE_HEIGHT)];
+extern const uint8_t sh1106_font_characters_big[ASCII_PRINTABLE_CHAR_COUNT]
+                                               [FONT_WIDTH_BIG * (FONT_HEIGHT_BIG / PAGE_HEIGHT)];
+extern const uint8_t
+    sh1106_font_characters_very_big[ASCII_PRINTABLE_CHAR_COUNT]
+                                   [FONT_WIDTH_VERY_BIG * (FONT_HEIGHT_VERY_BIG / PAGE_HEIGHT)];
 
 /*==================================================================
     Function declarations
