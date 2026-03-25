@@ -80,7 +80,7 @@ typedef union
 ===================================================================*/
 
 static void si4713_read_status(i2c_master_dev_handle_t dev_handle, si4713_status_response_t *status_ptr, si4713_status_response_t status_expected, uint32_t timeout_ms);
-static void si4713_read_response(i2c_master_dev_handle_t dev_handle, uint8_t *resp_ptr, uint8_t resp_len);
+static void si4713_read_response(i2c_master_dev_handle_t dev_handle, uint8_t *resp_buff, uint8_t resp_len);
 static inline void si4713_send_cmd(i2c_master_dev_handle_t dev_handle, uint8_t cmd, const uint8_t *args, uint8_t arg_cnt);
 
 /*==================================================================
@@ -108,12 +108,12 @@ static void si4713_read_status(i2c_master_dev_handle_t dev_handle, si4713_status
  * @brief Read multi-byte response from Si4713.
  *
  * @param[in] dev_handle I2C master device handle.
- * @param[out] resp_ptr Response buffer pointer.
+ * @param[out] resp_buff Response buffer pointer.
  * @param[in] resp_len Response buffer length.
  */
-static inline void si4713_read_response(i2c_master_dev_handle_t dev_handle, uint8_t *resp_ptr, uint8_t resp_len)
+static inline void si4713_read_response(i2c_master_dev_handle_t dev_handle, uint8_t *resp_buff, uint8_t resp_len)
 {
-    ESP_ERROR_CHECK(i2c_read_response(dev_handle, resp_ptr, resp_len));
+    ESP_ERROR_CHECK(i2c_read_response(dev_handle, resp_buff, resp_len));
 }
 
 /**

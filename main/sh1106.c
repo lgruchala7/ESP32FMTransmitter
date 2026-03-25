@@ -33,11 +33,17 @@
 ===================================================================*/
 
 /* Get bitmap data for a specific ASCII character */
-#define GET_FONT_DATA_SMALL(c) (&sh1106_font_characters_small[(uint8_t)(c) - 0x20U][0])
-#define GET_FONT_DATA_BIG_UPPER(c) (&sh1106_font_characters_big[(uint8_t)(c) - 0x20U][0])
-#define GET_FONT_DATA_BIG_LOWER(c) (&sh1106_font_characters_big[(uint8_t)(c) - 0x20U][FONT_WIDTH_BIG])
-#define GET_FONT_DATA_BOLD_BIG_UPPER(c) (&sh1106_font_characters_bold_big[(uint8_t)(c) - 0x20U][0])
-#define GET_FONT_DATA_BOLD_BIG_LOWER(c) (&sh1106_font_characters_bold_big[(uint8_t)(c) - 0x20U][FONT_WIDTH_BOLD_BIG])
+#define GET_FONT_DATA_SMALL(c) (&sh1106_font_characters_small[(uint8_t)(c) - ASCII_PRINTABLE_CHAR_OFFSET][0])
+
+#define GET_FONT_DATA_BIG_UPPER(c) (&sh1106_font_characters_big[(uint8_t)(c) - ASCII_PRINTABLE_CHAR_OFFSET][0])
+#define GET_FONT_DATA_BIG_LOWER(c) (&sh1106_font_characters_big[(uint8_t)(c) - ASCII_PRINTABLE_CHAR_OFFSET][FONT_WIDTH_BIG])
+
+#define GET_FONT_DATA_VERY_BIG_UPPER(c) (&sh1106_font_characters_very_big[(uint8_t)(c) - ASCII_PRINTABLE_CHAR_OFFSET][0])
+#define GET_FONT_DATA_VERY_BIG_MIDDLE(c) (&sh1106_font_characters_very_big[(uint8_t)(c) - ASCII_PRINTABLE_CHAR_OFFSET][FONT_WIDTH_VERY_BIG])
+#define GET_FONT_DATA_VERY_BIG_LOWER(c) (&sh1106_font_characters_very_big[(uint8_t)(c) - ASCII_PRINTABLE_CHAR_OFFSET][FONT_WIDTH_VERY_BIG * 2])
+
+#define PAGE_ADDRESS_RANGE_CHECK(font_height, address) ((PAGE_ADDRESS_MIN <= (address)) && (PAGE_ADDRESS_MAX - ((font_height) / PAGE_HEIGHT) + 1) >= (address))
+#define COLUMN_ADDRESS_RANGE_CHECK(font_width, address) ((COLUMN_ADDRESS_MIN <= (address)) && ((COLUMN_ADDRESS_MAX - (font_width) + 1) >= (address)))
 
 /*==================================================================
     Local types
@@ -149,7 +155,7 @@ esp_err_t sh1106_display_off_on(i2c_master_dev_handle_t dev_handle, bool state)
  */
 esp_err_t sh1106_set_page_address(i2c_master_dev_handle_t dev_handle, uint8_t address)
 {
-    if ((PAGE_ADDRESS_MIN > address) || (address > PAGE_ADDRESS_MAX))
+    if ((PAGE_ADDRESS_MIN > address) || (PAGE_ADDRESS_MAX < address))
     {
         ESP_LOGE(SH1106_TAG, "Invalid page address: %u. Valid range: <%u-%u>.", address, PAGE_ADDRESS_MIN, PAGE_ADDRESS_MAX);
     }
@@ -177,7 +183,7 @@ esp_err_t sh1106_set_page_address(i2c_master_dev_handle_t dev_handle, uint8_t ad
  */
 esp_err_t sh1106_set_column_address(i2c_master_dev_handle_t dev_handle, uint8_t address)
 {
-    if ((COLUMN_ADDRESS_MIN > address) || (address > COLUMN_ADDRESS_MAX))
+    if ((COLUMN_ADDRESS_MIN > address) || (COLUMN_ADDRESS_MAX < address))
     {
         ESP_LOGE(SH1106_TAG, "Invalid column address: %u. Valid range: <%u-%u>.", address, COLUMN_ADDRESS_MIN, COLUMN_ADDRESS_MAX);
     }
@@ -562,31 +568,31 @@ esp_err_t sh1106_set_entire_display_off_on(i2c_master_dev_handle_t dev_handle, b
  * @param[in] dev_handle I2C master device handle.
  * @param[in] c Character to b e written.
  * @param[in] page_address Write operation page address.
- * @param[in,out] column_address Write operation column address pointer.
+ * @param[in,out] p_column_address Write operation column address pointer. Updated after succesful write.
  * @return
  *      - ESP_OK: Write Small Character command successful.
  *      - ESP_FAIL: Write Small Character command failed.
  */
-esp_err_t sh1106_write_character_small(i2c_master_dev_handle_t dev_handle, char c, uint8_t page_address, uint8_t *column_address)
+esp_err_t sh1106_write_character_small(i2c_master_dev_handle_t dev_handle, char c, uint8_t page_address, uint8_t *p_column_address)
 {
     esp_err_t ret_val = ESP_FAIL;
 
-    if ((PAGE_ADDRESS_MIN > page_address) || (page_address > PAGE_ADDRESS_MAX))
+    if (!PAGE_ADDRESS_RANGE_CHECK(FONT_HEIGHT_SMALL, page_address))
     {
         ESP_LOGE(SH1106_TAG, "Invalid page address: %u. Valid range: <%u-%u>.", page_address, PAGE_ADDRESS_MIN, PAGE_ADDRESS_MAX);
     }
 
-    else if ((COLUMN_ADDRESS_MIN > *column_address) || (*column_address > (COLUMN_ADDRESS_MAX - FONT_WIDTH_SMALL)))
+    else if (!COLUMN_ADDRESS_RANGE_CHECK(FONT_WIDTH_SMALL, *p_column_address))
     {
-        ESP_LOGE(SH1106_TAG, "Invalid column address: %u. Valid range: <%u-%u>.", *column_address, COLUMN_ADDRESS_MIN, (COLUMN_ADDRESS_MAX - FONT_WIDTH_SMALL));
+        ESP_LOGE(SH1106_TAG, "Invalid column address: %u. Valid range: <%u-%u>.", *p_column_address, COLUMN_ADDRESS_MIN, (COLUMN_ADDRESS_MAX - FONT_WIDTH_SMALL));
     }
     else
     {
         const uint8_t *data = GET_FONT_DATA_SMALL(c);
         sh1106_set_page_address(dev_handle, page_address);
-        sh1106_set_column_address(dev_handle, *column_address);
+        sh1106_set_column_address(dev_handle, *p_column_address);
         sh1106_write_display_data(dev_handle, data, FONT_WIDTH_SMALL);
-        *column_address += FONT_WIDTH_SMALL;
+        *p_column_address += FONT_WIDTH_SMALL;
 
         ret_val = ESP_OK;
     }
@@ -600,37 +606,37 @@ esp_err_t sh1106_write_character_small(i2c_master_dev_handle_t dev_handle, char 
  * @param[in] dev_handle I2C master device handle.
  * @param[in] c Character to b e written.
  * @param[in] page_address Write operation page address.
- * @param[in,out] column_address Write operation column address pointer.
+ * @param[in,out] p_column_address Write operation column address pointer. Updated after succesful write.
  * @return
  *      - ESP_OK: Write Big Character command successful.
  *      - ESP_FAIL: Write Big Character command failed.
  */
-esp_err_t sh1106_write_character_big(i2c_master_dev_handle_t dev_handle, char c, uint8_t page_address, uint8_t *column_address)
+esp_err_t sh1106_write_character_big(i2c_master_dev_handle_t dev_handle, char c, uint8_t page_address, uint8_t *p_column_address)
 {
     esp_err_t ret_val = ESP_FAIL;
 
-    if ((PAGE_ADDRESS_MIN > page_address) || (page_address > (PAGE_ADDRESS_MAX - 1U)))
+    if (!PAGE_ADDRESS_RANGE_CHECK(FONT_HEIGHT_BIG, page_address))
     {
-        ESP_LOGE(SH1106_TAG, "Invalid page address: %u. Valid range: <%u-%u>.", page_address, PAGE_ADDRESS_MIN, (PAGE_ADDRESS_MAX - 1U));
+        ESP_LOGE(SH1106_TAG, "Invalid page address: %u. Valid range: <%u-%u>.", page_address, PAGE_ADDRESS_MIN, (PAGE_ADDRESS_MAX - (FONT_HEIGHT_BIG / PAGE_HEIGHT) + 1));
     }
-    else if ((COLUMN_ADDRESS_MIN > *column_address) || (*column_address > (COLUMN_ADDRESS_MAX - FONT_WIDTH_BIG)))
+    else if (!COLUMN_ADDRESS_RANGE_CHECK(FONT_WIDTH_BIG, *p_column_address))
     {
-        ESP_LOGE(SH1106_TAG, "Invalid column address: %u. Valid range: <%u-%u>.", column_address, COLUMN_ADDRESS_MIN, (COLUMN_ADDRESS_MAX - FONT_WIDTH_BIG));
+        ESP_LOGE(SH1106_TAG, "Invalid column address: %u. Valid range: <%u-%u>.", *p_column_address, COLUMN_ADDRESS_MIN, (COLUMN_ADDRESS_MAX - FONT_WIDTH_BIG + 1));
     }
     else
     {
         const uint8_t *data = GET_FONT_DATA_BIG_UPPER(c);
         sh1106_set_page_address(dev_handle, page_address);
-        sh1106_set_column_address(dev_handle, *column_address);
+        sh1106_set_column_address(dev_handle, *p_column_address);
         sh1106_write_display_data(dev_handle, data, FONT_WIDTH_BIG);
 
         data = GET_FONT_DATA_BIG_LOWER(c);
         sh1106_set_page_address(dev_handle, page_address + 1U);
-        sh1106_set_column_address(dev_handle, *column_address);
+        sh1106_set_column_address(dev_handle, *p_column_address);
         sh1106_write_display_data(dev_handle, data, FONT_WIDTH_BIG);
 
         sh1106_set_page_address(dev_handle, page_address);
-        *column_address += FONT_WIDTH_BIG;
+        *p_column_address += FONT_WIDTH_BIG;
 
         ret_val = ESP_OK;
     }
@@ -639,42 +645,47 @@ esp_err_t sh1106_write_character_big(i2c_master_dev_handle_t dev_handle, char c,
 }
 
 /**
- * @brief Writes a big font bolded character to the display.
+ * @brief Writes a very big font character to the display.
  *
  * @param[in] dev_handle I2C master device handle.
  * @param[in] c Character to b e written.
  * @param[in] page_address Write operation page address.
- * @param[in,out] column_address Write operation column address pointer.
+ * @param[in,out] p_column_address Write operation column address pointer. Updated after succesful write.
  * @return
- *      - ESP_OK: Write Big Bolded Character command successful.
- *      - ESP_FAIL: Write Big Bolded Character command failed.
+ *      - ESP_OK: Write Very Big Character command successful.
+ *      - ESP_FAIL: Write Very Big Character command failed.
  */
-esp_err_t sh1106_write_character_bold_big(i2c_master_dev_handle_t dev_handle, char c, uint8_t page_address, uint8_t *column_address)
+esp_err_t sh1106_write_character_very_big(i2c_master_dev_handle_t dev_handle, char c, uint8_t page_address, uint8_t *p_column_address)
 {
     esp_err_t ret_val = ESP_FAIL;
 
-    if ((PAGE_ADDRESS_MIN > page_address) || (page_address > (PAGE_ADDRESS_MAX - 1U)))
+    if (!PAGE_ADDRESS_RANGE_CHECK(FONT_HEIGHT_VERY_BIG, page_address))
     {
-        ESP_LOGE(SH1106_TAG, "Invalid page address: %u. Valid range: <%u-%u>.", page_address, PAGE_ADDRESS_MIN, (PAGE_ADDRESS_MAX - 1U));
+        ESP_LOGE(SH1106_TAG, "Invalid page address: %u. Valid range: <%u-%u>.", page_address, PAGE_ADDRESS_MIN, (PAGE_ADDRESS_MAX - (FONT_HEIGHT_VERY_BIG / PAGE_HEIGHT) + 1));
     }
-    else if ((COLUMN_ADDRESS_MIN > *column_address) || (*column_address > (COLUMN_ADDRESS_MAX - FONT_WIDTH_BOLD_BIG)))
+    else if (!COLUMN_ADDRESS_RANGE_CHECK(FONT_WIDTH_VERY_BIG, *p_column_address))
     {
-        ESP_LOGE(SH1106_TAG, "Invalid column address: %u. Valid range: <%u-%u>.", column_address, COLUMN_ADDRESS_MIN, (COLUMN_ADDRESS_MAX - FONT_WIDTH_BOLD_BIG));
+        ESP_LOGE(SH1106_TAG, "Invalid column address: %u. Valid range: <%u-%u>.", *p_column_address, COLUMN_ADDRESS_MIN, (COLUMN_ADDRESS_MAX - FONT_WIDTH_VERY_BIG + 1));
     }
     else
     {
-        const uint8_t *data = GET_FONT_DATA_BOLD_BIG_UPPER(c);
+        const uint8_t *data = GET_FONT_DATA_VERY_BIG_UPPER(c);
         sh1106_set_page_address(dev_handle, page_address);
-        sh1106_set_column_address(dev_handle, *column_address);
-        sh1106_write_display_data(dev_handle, data, FONT_WIDTH_BOLD_BIG);
+        sh1106_set_column_address(dev_handle, *p_column_address);
+        sh1106_write_display_data(dev_handle, data, FONT_WIDTH_VERY_BIG);
 
-        data = GET_FONT_DATA_BOLD_BIG_LOWER(c);
+        data = GET_FONT_DATA_VERY_BIG_MIDDLE(c);
         sh1106_set_page_address(dev_handle, page_address + 1U);
-        sh1106_set_column_address(dev_handle, *column_address);
-        sh1106_write_display_data(dev_handle, data, FONT_WIDTH_BOLD_BIG);
+        sh1106_set_column_address(dev_handle, *p_column_address);
+        sh1106_write_display_data(dev_handle, data, FONT_WIDTH_VERY_BIG);
+
+        data = GET_FONT_DATA_VERY_BIG_LOWER(c);
+        sh1106_set_page_address(dev_handle, page_address + 2U);
+        sh1106_set_column_address(dev_handle, *p_column_address);
+        sh1106_write_display_data(dev_handle, data, FONT_WIDTH_VERY_BIG);
 
         sh1106_set_page_address(dev_handle, page_address);
-        *column_address += FONT_WIDTH_BOLD_BIG;
+        *p_column_address += FONT_WIDTH_VERY_BIG;
 
         ret_val = ESP_OK;
     }

@@ -20,16 +20,6 @@
     Object-like macros
 ===================================================================*/
 
-/* Display dimensions */
-#define DISPLAY_WIDTH 128U
-#define DISPLAY_HEIGHT 64U
-
-/* Display address ranges */
-#define PAGE_ADDRESS_MIN 0U
-#define PAGE_ADDRESS_MAX 7U
-#define COLUMN_ADDRESS_MIN 0U
-#define COLUMN_ADDRESS_MAX (DISPLAY_WIDTH - 1U)
-
 /* Oscillator frequency */
 #define OSC_FREQ_MIN_25 0x0U
 #define OSC_FREQ_MIN_20 0x1U
@@ -99,8 +89,9 @@
 #define PRECHARGE_PERIOD_DCLK(x) (x)
 
 /* Return next page address depending on the font size */
-#define NEXT_PAGE_SMALL(page_curr) ((page_curr) + (FONT_HEIGHT_SMALL / 8U))
-#define NEXT_PAGE_BIG(page_curr) ((page_curr) + (FONT_HEIGHT_BIG / 8U))
+#define NEXT_PAGE_SMALL(page_curr) ((page_curr) + (FONT_HEIGHT_SMALL / PAGE_HEIGHT))
+#define NEXT_PAGE_BIG(page_curr) ((page_curr) + (FONT_HEIGHT_BIG / PAGE_HEIGHT))
+#define NEXT_PAGE_VERY_BIG(page_curr) ((page_curr) + (FONT_HEIGHT_VERY_BIG / PAGE_HEIGHT))
 
 /*==================================================================
     Exported types
@@ -132,9 +123,11 @@ esp_err_t sh1106_set_vcom_deselect_lvl(i2c_master_dev_handle_t dev_handle, uint8
 esp_err_t sh1106_set_pump_voltage(i2c_master_dev_handle_t dev_handle, uint8_t voltage);
 esp_err_t sh1106_set_normal_reverse_display(i2c_master_dev_handle_t dev_handle, bool reverse);
 esp_err_t sh1106_set_entire_display_off_on(i2c_master_dev_handle_t dev_handle, bool state);
-esp_err_t sh1106_write_character_small(i2c_master_dev_handle_t dev_handle, char c, uint8_t page_address, uint8_t *column_address);
-esp_err_t sh1106_write_character_big(i2c_master_dev_handle_t dev_handle, char c, uint8_t page_address, uint8_t *column_address);
-esp_err_t sh1106_write_character_bold_big(i2c_master_dev_handle_t dev_handle, char c, uint8_t page_address, uint8_t *column_address);
+
+esp_err_t sh1106_write_character_small(i2c_master_dev_handle_t dev_handle, char c, uint8_t page_address, uint8_t *p_column_address);
+esp_err_t sh1106_write_character_big(i2c_master_dev_handle_t dev_handle, char c, uint8_t page_address, uint8_t *p_column_address);
+esp_err_t sh1106_write_character_very_big(i2c_master_dev_handle_t dev_handle, char c, uint8_t page_address, uint8_t *p_column_address);
+
 esp_err_t sh1106_clear_page(i2c_master_dev_handle_t dev_handle, uint8_t address);
 
 #endif /* __SH1106_H__ */

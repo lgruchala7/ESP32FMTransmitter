@@ -57,6 +57,9 @@
 #define ENCODER_STEP_VAL 10U
 #define KNOB_DEBOUNCING_TIME_US 5000U
 
+#define ICON_HEIGHT_PX 24U
+#define ICON_WIDTH_PX 16U
+
 /*==================================================================
     Function-like macros
 ===================================================================*/
@@ -93,6 +96,15 @@ enum
     PLAYBACK_STATE_CHANGE_EVT = 2,
 };
 
+/* Display segments */
+enum
+{
+    TX_FREQ_SEG = 0,
+    FM_SUFFIX_SEG = 1,
+    PLAYBACK_STATE_SEG = 2,
+    DISPLAY_SEG_CNT = 3,
+};
+
 /*==================================================================
     Local objects
 ===================================================================*/
@@ -101,14 +113,22 @@ static const char local_device_name[] = CONFIG_EXAMPLE_LOCAL_DEVICE_NAME;
 static uint16_t tx_frequency = TX_TUNE_FREQ_DEFAULT_VAL;
 
 /* Playback status strings */
-static const char str_play[] = "PLAY";
-static const char str_stop[] = "STOP";
 
 static TaskHandle_t display_update_task_handle = NULL;
 static i2c_master_dev_handle_t sh1106_dev_handle = NULL;
 static i2c_master_dev_handle_t si4713_dev_handle = NULL;
 static gptimer_handle_t debounce_timer = NULL;
 static int knob_debounce_event;
+
+/* Play/Pause bitmaps */
+const uint8_t icon_play[(ICON_HEIGHT_PX / PAGE_HEIGHT) * ICON_WIDTH_PX] = {
+    0x00, 0x00, 0x00, 0x00, 0x00, 0xF0, 0xE0, 0xC0, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7E, 0x3C, 0x18, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x0F, 0x07, 0x03, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+const uint8_t icon_pause[(ICON_HEIGHT_PX / PAGE_HEIGHT) * ICON_WIDTH_PX] = {
+    0x00, 0x00, 0x00, 0xE0, 0xE0, 0xE0, 0xE0, 0x00, 0x00, 0xE0, 0xE0, 0xE0, 0xE0, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x07, 0x07, 0x07, 0x07, 0x00, 0x00, 0x07, 0x07, 0x07, 0x07, 0x00, 0x00, 0x00};
 
 /*==================================================================
     Local function declarations
@@ -120,18 +140,19 @@ static inline void powerup_si4713(void);
 static inline void tune_si4713(void);
 static inline void audio_dynamic_range_control_si4713(void);
 static inline void configure_sh1106(void);
-static inline void write_initial_contents_sh1106(void);
+static inline void write_initial_display_contents(void);
 static inline void init_encoder_control(void);
 
 /* Handlers and callbacks */
 static void bt_app_dev_cb(esp_bt_dev_cb_event_t event, esp_bt_dev_cb_param_t *param);
 static void bt_app_gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *param);
-static bool knob_debounce_timer_cb(gptimer_handle_t timer, const gptimer_alarm_event_data_t *edata, void *user_data);
 static void bt_av_hdl_stack_evt(uint16_t event, void *p_param);
 static void gpio_isr_handler(void *arg);
+static bool knob_debounce_timer_cb(gptimer_handle_t timer, const gptimer_alarm_event_data_t *edata, void *user_data);
 
 /* Auxiliary functions */
 static char *bda2str(uint8_t *bda, char *str, size_t size);
+static void write_display_segment(int segment, const uint8_t *data);
 
 /*==================================================================
     Function definitions
@@ -232,36 +253,27 @@ static bool IRAM_ATTR knob_debounce_timer_cb(gptimer_handle_t timer, const gptim
 static void display_update_task_handler(void *arg)
 {
     bool playback_state = ON_STATE;
-    const char *curr_char = NULL;
+    const uint8_t *curr_icon = NULL;
     bool frequency_changed = false;
 
     for (;;)
     {
         if (0U != ulTaskNotifyTakeIndexed(PLAYBACK_STATE_CHANGE_EVT, pdTRUE, pdMS_TO_TICKS(10)))
         {
-            uint8_t column_address = COLUMN_ADDRESS_MIN;
-            uint8_t page_address = PLAYBACK_STATE_PAGE_ADDRESS;
-            sh1106_clear_page(sh1106_dev_handle, page_address);
-            sh1106_clear_page(sh1106_dev_handle, (page_address + 1U));
-
             if (ON_STATE == playback_state)
             {
-                curr_char = str_stop;
+                curr_icon = &icon_pause[0];
                 playback_state = OFF_STATE;
             }
             else if (OFF_STATE == playback_state)
             {
-                curr_char = str_play;
+                curr_icon = &icon_play[0];
                 playback_state = ON_STATE;
             }
 
-            while (0 != *curr_char)
-            {
-                sh1106_write_character_big(sh1106_dev_handle, *curr_char, page_address, &column_address);
-                curr_char++;
-            }
+            write_display_segment(PLAYBACK_STATE_SEG, curr_icon);
 
-            ESP_LOGI(ENCODER_TAG, "Playback state changed to %s.", (ON_STATE == playback_state) ? str_play : str_stop);
+            ESP_LOGI(ENCODER_TAG, "Playback state changed to %s.", (ON_STATE == playback_state) ? "PLAY" : "PAUSE");
         }
 
         if (0U != ulTaskNotifyTakeIndexed(TX_FREQ_INCREASE_EVT, pdTRUE, pdMS_TO_TICKS(10)))
@@ -277,6 +289,7 @@ static void display_update_task_handler(void *arg)
 
             frequency_changed = true;
         }
+
         if (0U != ulTaskNotifyTakeIndexed(TX_FREQ_DECREASE_EVT, pdTRUE, pdMS_TO_TICKS(10)))
         {
             if (tx_frequency > TX_TUNE_FREQ_MIN)
@@ -294,14 +307,7 @@ static void display_update_task_handler(void *arg)
         if (true == frequency_changed)
         {
             /* Change FM transmitter actual frequency */
-            si4713_tx_tune_freq(si4713_dev_handle, tx_frequency);
-
-            /* Change displayed frequency */
-            uint8_t column_address = COLUMN_ADDRESS_MIN;
-            uint8_t page_address = TX_FREQ_PAGE_ADDRESS;
-
-            sh1106_clear_page(sh1106_dev_handle, page_address);
-            sh1106_clear_page(sh1106_dev_handle, (page_address + 1U));
+            // si4713_tx_tune_freq(si4713_dev_handle, tx_frequency);
 
             /* Write integral part of frequency */
             uint16_t integral_part = tx_frequency / 100U;
@@ -311,22 +317,25 @@ static void display_update_task_handler(void *arg)
             integral_part_digits[1] = (integral_part / 10U) - (integral_part_digits[0] * 10U);
             integral_part_digits[2] = integral_part - (integral_part_digits[0] * 100U) - (integral_part_digits[1] * 10U);
 
+            char display_data[7];
+            int display_data_idx = 0;
             for (int i = 0; i < sizeof(integral_part_digits); i++)
             {
                 uint8_t digit = integral_part_digits[i];
 
-                /* Skip displaying 0 if frequency smaller than 100 MHz*/
+                /* Add space at the beginning if frequency smaller than 100 MHz*/
                 if ((0 == i) && (0U == digit))
                 {
+                    display_data[display_data_idx++] = ' ';
                     continue;
                 }
 
                 char digit_ascii = INT_TO_ASCII_CHAR(digit);
-                sh1106_write_character_big(sh1106_dev_handle, digit_ascii, page_address, &column_address);
+                display_data[display_data_idx++] = digit_ascii;
             }
 
             /* Write decimal separator character */
-            sh1106_write_character_big(sh1106_dev_handle, '.', page_address, &column_address);
+            display_data[display_data_idx++] = '.';
 
             /* Write decimal part of frequency */
             uint16_t decimal_part = tx_frequency - (integral_part * 100U);
@@ -339,8 +348,13 @@ static void display_update_task_handler(void *arg)
             {
                 uint8_t digit = decimal_part_digits[i];
                 char digit_ascii = INT_TO_ASCII_CHAR(digit);
-                sh1106_write_character_big(sh1106_dev_handle, digit_ascii, page_address, &column_address);
+                display_data[display_data_idx++] = digit_ascii;
             }
+
+            /* Terminate string */
+            display_data[display_data_idx] = '\0';
+
+            write_display_segment(TX_FREQ_SEG, (uint8_t *)display_data);
 
             frequency_changed = false;
 
@@ -620,42 +634,19 @@ static inline void configure_sh1106(void)
     sh1106_set_entire_display_off_on(sh1106_dev_handle, OFF_STATE);
 }
 
-/* THis function writes initial contents to the display */
-static inline void write_initial_contents_sh1106(void)
+/* This function writes initial contents to the display */
+static inline void write_initial_display_contents(void)
 {
-    uint8_t column_address = COLUMN_ADDRESS_MIN;
-    uint8_t page_address = HEADER_PAGE_ADDRESS;
+    /* TX Frequency value */
+    char display_data[7];
+    sprintf(display_data, "%d.%d", (TX_TUNE_FREQ_DEFAULT_VAL / 100), (TX_TUNE_FREQ_DEFAULT_VAL - (TX_TUNE_FREQ_DEFAULT_VAL / 100) * 100));
+    ESP_LOGI(SH1106_TAG, "Writing frequency: %s", display_data);
+    write_display_segment(TX_FREQ_SEG, (uint8_t *)display_data);
 
-    const char str_1[] = "FM Frequency";
-    const char *curr_char = str_1;
-    while (0 != *curr_char)
-    {
-        sh1106_write_character_big(sh1106_dev_handle, *curr_char, page_address, &column_address);
-        curr_char++;
-    }
-
-    column_address = COLUMN_ADDRESS_MIN;
-    page_address = NEXT_PAGE_BIG(page_address);
-
-    char str_2[7];
-    sprintf(str_2, "%d.%d", (TX_TUNE_FREQ_DEFAULT_VAL / 100), (TX_TUNE_FREQ_DEFAULT_VAL - (TX_TUNE_FREQ_DEFAULT_VAL / 100) * 100));
-    ESP_LOGI(SH1106_TAG, "%s", str_2);
-    curr_char = str_2;
-    while (0 != *curr_char)
-    {
-        sh1106_write_character_big(sh1106_dev_handle, *curr_char, page_address, &column_address);
-        curr_char++;
-    }
-
-    column_address = COLUMN_ADDRESS_MIN;
-    page_address = NEXT_PAGE_BIG(page_address);
-
-    curr_char = str_play;
-    while (0 != *curr_char)
-    {
-        sh1106_write_character_big(sh1106_dev_handle, *curr_char, page_address, &column_address);
-        curr_char++;
-    }
+    /* "FM" suffix */
+    write_display_segment(FM_SUFFIX_SEG, " FM");
+    /* Play icon default */
+    write_display_segment(PLAYBACK_STATE_SEG, &icon_play[0]);
 }
 
 /* Initializes encoder pins and GPIO interrupts. */
@@ -695,6 +686,82 @@ static inline void init_encoder_control(void)
     gpio_isr_handler_add(GPIO_INPUT_ENCODER_SIA, gpio_isr_handler, (void *)GPIO_INPUT_ENCODER_SIA);
     gpio_isr_handler_add(GPIO_INPUT_ENCODER_SIB, gpio_isr_handler, (void *)GPIO_INPUT_ENCODER_SIB);
     gpio_isr_handler_add(GPIO_INPUT_ENCODER_SW, gpio_isr_handler, (void *)GPIO_INPUT_ENCODER_SW);
+}
+
+/* THis functions handles formatting data for the particular display segment */
+static void write_display_segment(int segment, const uint8_t *data)
+{
+    if (TX_FREQ_SEG == segment)
+    {
+        char *curr_char = (char *)data;
+        uint8_t column_address = TX_FREQ_COLUMN_ADDRESS;
+        uint8_t page_address = TX_FREQ_PAGE_ADDRESS;
+        uint8_t font_size = TX_FREQ_FONT_HEIGHT;
+
+        switch (font_size)
+        {
+        case FONT_HEIGHT_SMALL:
+        {
+            while ('\0' != *curr_char)
+            {
+                sh1106_write_character_small(sh1106_dev_handle, *curr_char, page_address, &column_address);
+                curr_char++;
+            }
+            break;
+        }
+
+        case FONT_HEIGHT_BIG:
+        {
+            while ('\0' != *curr_char)
+            {
+                sh1106_write_character_big(sh1106_dev_handle, *curr_char, page_address, &column_address);
+                curr_char++;
+            }
+            break;
+        }
+
+        case FONT_HEIGHT_VERY_BIG:
+        {
+            while ('\0' != *curr_char)
+            {
+                sh1106_write_character_very_big(sh1106_dev_handle, *curr_char, page_address, &column_address);
+                curr_char++;
+            }
+            break;
+        }
+
+        default:
+            break;
+        }
+    }
+    else if (PLAYBACK_STATE_SEG == segment)
+    {
+        uint8_t column_address = PLAYBACK_STATE_COLUMN_ADDRESS;
+        uint8_t page_address = PLAYBACK_STATE_PAGE_ADDRESS;
+
+        for (uint8_t i = 0; i < (ICON_HEIGHT_PX / PAGE_HEIGHT); i++)
+        {
+            sh1106_set_page_address(sh1106_dev_handle, (page_address + i));
+            sh1106_set_column_address(sh1106_dev_handle, column_address);
+            sh1106_write_display_data(sh1106_dev_handle, &data[i * ICON_WIDTH_PX], ICON_WIDTH_PX);
+        }
+    }
+    else if (FM_SUFFIX_SEG == segment)
+    {
+        uint8_t page_address = TX_FREQ_PAGE_ADDRESS + 1U;
+        uint8_t column_address = TX_FREQ_COLUMN_ADDRESS + (7 * TX_FREQ_FONT_WIDTH);
+        const char *curr_char = data;
+
+        while ('\0' != *curr_char)
+        {
+            sh1106_write_character_big(sh1106_dev_handle, *curr_char, page_address, &column_address);
+            curr_char++;
+        }
+    }
+    else
+    {
+        /* Non existent segment */
+    }
 }
 
 void app_main(void)
@@ -793,7 +860,7 @@ void app_main(void)
         sh1106_clear_page(sh1106_dev_handle, i);
     }
 
-    write_initial_contents_sh1106();
+    write_initial_display_contents();
     /* Create a task for updating the display contents */
     xTaskCreate(display_update_task_handler, "display_update_task", 3072U, NULL, 10, &display_update_task_handle);
     init_encoder_control();
