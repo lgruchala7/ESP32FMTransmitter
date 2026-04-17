@@ -113,8 +113,6 @@ enum
 static const char local_device_name[] = CONFIG_EXAMPLE_LOCAL_DEVICE_NAME;
 static uint16_t tx_frequency = TX_TUNE_FREQ_DEFAULT_VAL;
 
-/* Playback status strings */
-
 static TaskHandle_t display_update_task_handle = NULL;
 static i2c_master_dev_handle_t sh1106_dev_handle = NULL;
 static i2c_master_dev_handle_t si4713_dev_handle = NULL;
@@ -319,7 +317,7 @@ static void display_update_task_handler(void *arg)
         if (true == frequency_changed)
         {
             /* Change FM transmitter actual frequency */
-            // si4713_tx_tune_freq(si4713_dev_handle, tx_frequency);
+            si4713_tx_tune_freq(si4713_dev_handle, tx_frequency);
 
             /* Write integral part of frequency */
             uint16_t integral_part = tx_frequency / 100U;
@@ -409,7 +407,7 @@ static void bt_app_dev_cb(esp_bt_dev_cb_event_t event, esp_bt_dev_cb_param_t *pa
         }
         default:
         {
-            ESP_LOGI(BT_AV_TAG, "event: %d", event);
+            ESP_LOGI(BT_AV_TAG, "%s event: %d", __func__, event);
             break;
         }
     }
@@ -492,7 +490,7 @@ static void bt_app_gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *pa
         /* others */
         default:
         {
-            ESP_LOGI(BT_AV_TAG, "event: %d", event);
+            ESP_LOGI(BT_AV_TAG, "%s event: %d", __func__, event);
             break;
         }
     }
@@ -672,7 +670,7 @@ static inline void write_initial_display_contents(void)
     write_display_segment(TX_FREQ_SEG, (uint8_t *)display_data);
 
     /* "FM" suffix */
-    write_display_segment(FM_SUFFIX_SEG, " FM");
+    write_display_segment(FM_SUFFIX_SEG, (uint8_t *)" FM");
     /* Play icon default */
     write_display_segment(PLAYBACK_STATE_SEG, &icon_play[0]);
 }
@@ -717,7 +715,7 @@ static inline void init_encoder_control(void)
     gpio_isr_handler_add(GPIO_INPUT_ENCODER_SW, gpio_isr_handler, (void *)GPIO_INPUT_ENCODER_SW);
 }
 
-/* THis functions handles formatting data for the particular display segment */
+/* This functions handles formatting data for the particular display segment */
 static void write_display_segment(int segment, const uint8_t *data)
 {
     if (TX_FREQ_SEG == segment)
@@ -780,9 +778,9 @@ static void write_display_segment(int segment, const uint8_t *data)
     }
     else if (FM_SUFFIX_SEG == segment)
     {
-        uint8_t page_address = TX_FREQ_PAGE_ADDRESS + 1U;
-        uint8_t column_address = TX_FREQ_COLUMN_ADDRESS + (7 * TX_FREQ_FONT_WIDTH);
-        const char *curr_char = data;
+        uint8_t page_address = FM_SUFFIX_PAGE_ADDRESS;
+        uint8_t column_address = FM_SUFFIX_COLUMN_ADDRESS;
+        const char *curr_char = (char *)data;
 
         while ('\0' != *curr_char)
         {
@@ -799,7 +797,6 @@ static void write_display_segment(int segment, const uint8_t *data)
 
 void app_main(void)
 {
-    char bda_str[18] = {0};
     /* initialize NVS — it is used to store PHY calibration data */
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND)
@@ -859,6 +856,7 @@ void app_main(void)
     pin_code[3] = '4';
     esp_bt_gap_set_pin(pin_type, 4, pin_code);
 
+    char bda_str[18] = {0};
     ESP_LOGI(BT_AV_TAG, "Own address:[%s]",
              bda2str((uint8_t *)esp_bt_dev_get_address(), bda_str, sizeof(bda_str)));
     bt_app_task_start_up();
