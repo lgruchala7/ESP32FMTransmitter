@@ -41,8 +41,13 @@
     Object-like macros
 ===================================================================*/
 
+/* NVS storage namespace */
+#define MAIN_STORAGE_NAMESPACE "storage"
+#define FM_FREQ_KEY "fm_tx_freq"
+
 /* Log tag */
 #define ENCODER_TAG "ENCODER"
+#define NVS_TAG "NVS"
 
 /* Encoder pins */
 #define GPIO_INPUT_ENCODER_SIA CONFIG_GPIO_INPUT_ENCODER_SIA
@@ -153,6 +158,8 @@ static bool knob_debounce_timer_cb(gptimer_handle_t timer, const gptimer_alarm_e
 /* Auxiliary functions */
 static char *bda2str(uint8_t *bda, char *str, size_t size);
 static void write_display_segment(int segment, const uint8_t *data);
+static esp_err_t store_nvs_data_u16(uint16_t data, const char *namespace, const char *key);
+static esp_err_t read_nvs_data_u16(uint16_t *data_ptr, const char *namespace, const char *key);
 
 /*==================================================================
     Function definitions
@@ -267,6 +274,7 @@ static void display_update_task_handler(void *arg)
 
     for (;;)
     {
+        /* Playback state changed */
         if (0U != ulTaskNotifyTakeIndexed(PLAYBACK_STATE_CHANGE_EVT, pdTRUE, pdMS_TO_TICKS(10)))
         {
             if (ON_STATE == playback_state)
@@ -294,6 +302,7 @@ static void display_update_task_handler(void *arg)
                                              ESP_AVRC_PT_CMD_STATE_RELEASED);
         }
 
+        /* FM frequency value increased */
         if (0U != ulTaskNotifyTakeIndexed(TX_FREQ_INCREASE_EVT, pdTRUE, pdMS_TO_TICKS(10)))
         {
             if (tx_frequency < TX_TUNE_FREQ_MAX)
@@ -308,6 +317,7 @@ static void display_update_task_handler(void *arg)
             frequency_changed = true;
         }
 
+        /* FM frequency value decreased */
         if (0U != ulTaskNotifyTakeIndexed(TX_FREQ_DECREASE_EVT, pdTRUE, pdMS_TO_TICKS(10)))
         {
             if (tx_frequency > TX_TUNE_FREQ_MIN)
@@ -322,62 +332,20 @@ static void display_update_task_handler(void *arg)
             frequency_changed = true;
         }
 
+        /* Displayed and transmitted FM frequency to be updated */
         if (true == frequency_changed)
         {
             /* Change FM transmitter actual frequency */
             si4713_tx_tune_freq(si4713_dev_handle, tx_frequency);
-
-            /* Write integral part of frequency */
-            uint16_t integral_part = tx_frequency / 100U;
-            uint8_t integral_part_digits[3] = {0U};
-
-            integral_part_digits[0] = integral_part / 100U;
-            integral_part_digits[1] = (integral_part / 10U) - (integral_part_digits[0] * 10U);
-            integral_part_digits[2] =
-                integral_part - (integral_part_digits[0] * 100U) - (integral_part_digits[1] * 10U);
+            store_nvs_data_u16(tx_frequency, MAIN_STORAGE_NAMESPACE, FM_FREQ_KEY);
 
             char display_data[7];
-            int display_data_idx = 0;
-            for (int i = 0; i < sizeof(integral_part_digits); i++)
-            {
-                uint8_t digit = integral_part_digits[i];
-
-                /* Add space at the beginning if frequency smaller than 100 MHz*/
-                if ((0 == i) && (0U == digit))
-                {
-                    display_data[display_data_idx++] = ' ';
-                    continue;
-                }
-
-                char digit_ascii = INT_TO_ASCII_CHAR(digit);
-                display_data[display_data_idx++] = digit_ascii;
-            }
-
-            /* Write decimal separator character */
-            display_data[display_data_idx++] = '.';
-
-            /* Write decimal part of frequency */
-            uint16_t decimal_part = tx_frequency - (integral_part * 100U);
-            uint8_t decimal_part_digits[2] = {0U};
-
-            decimal_part_digits[0] = decimal_part / 10U;
-            decimal_part_digits[1] = decimal_part - (decimal_part_digits[0] * 10U);
-
-            for (int i = 0; i < sizeof(decimal_part_digits); i++)
-            {
-                uint8_t digit = decimal_part_digits[i];
-                char digit_ascii = INT_TO_ASCII_CHAR(digit);
-                display_data[display_data_idx++] = digit_ascii;
-            }
-
-            /* Terminate string */
-            display_data[display_data_idx] = '\0';
-
+            sprintf(display_data, "%3u.%02u", (tx_frequency / 100),
+                    (tx_frequency - (tx_frequency / 100) * 100));
             write_display_segment(TX_FREQ_SEG, (uint8_t *)display_data);
+            ESP_LOGI(ENCODER_TAG, "TX frequency changed to %s", display_data);
 
             frequency_changed = false;
-
-            ESP_LOGI(ENCODER_TAG, "TX frequency changed to %u.%u", integral_part, decimal_part);
         }
     }
 }
@@ -419,6 +387,64 @@ static void bt_app_dev_cb(esp_bt_dev_cb_event_t event, esp_bt_dev_cb_param_t *pa
             break;
         }
     }
+}
+
+/* Write 16-bit unsigned int data to NVS */
+static esp_err_t store_nvs_data_u16(uint16_t data, const char *namespace, const char *key)
+{
+    nvs_handle_t nvs_handle;
+
+    ESP_LOGI(NVS_TAG, "Writing \"%s\" data to \"%s\".", key, namespace);
+    /* Open NVS handle */
+    esp_err_t err = nvs_open(namespace, NVS_READWRITE, &nvs_handle);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(NVS_TAG, "Error (%s) opening NVS handle!", esp_err_to_name(err));
+    }
+    else
+    {
+        /* Write data to NVS */
+        err = nvs_set_u16(nvs_handle, key, data);
+        if (err != ESP_OK)
+        {
+            ESP_LOGE(NVS_TAG, "Failed to store NVS data!");
+        }
+        else
+        {
+            nvs_commit(nvs_handle);
+        }
+
+        nvs_close(nvs_handle);
+    }
+
+    return err;
+}
+
+/* Read 16-bit unsigned int data from NVS */
+static esp_err_t read_nvs_data_u16(uint16_t *data_ptr, const char *namespace, const char *key)
+{
+    nvs_handle_t nvs_handle;
+
+    ESP_LOGI(NVS_TAG, "Reading \"%s\" data from \"%s\".", key, namespace);
+    /* Open NVS handle */
+    esp_err_t err = nvs_open(namespace, NVS_READONLY, &nvs_handle);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(NVS_TAG, "Error (%s) opening NVS handle!", esp_err_to_name(err));
+    }
+    else
+    {
+        /* Read data from NVS */
+        err = nvs_get_u16(nvs_handle, key, data_ptr);
+        if (err != ESP_OK)
+        {
+            ESP_LOGE(NVS_TAG, "Failed to read NVS data!");
+        }
+
+        nvs_close(nvs_handle);
+    }
+
+    return err;
 }
 
 /* GAP callback function */
@@ -672,8 +698,8 @@ static inline void write_initial_display_contents(void)
 {
     /* TX Frequency value */
     char display_data[7];
-    sprintf(display_data, "%d.%d", (TX_TUNE_FREQ_DEFAULT_VAL / 100),
-            (TX_TUNE_FREQ_DEFAULT_VAL - (TX_TUNE_FREQ_DEFAULT_VAL / 100) * 100));
+    sprintf(display_data, "%3u.%02u", (tx_frequency / 100),
+            (tx_frequency - (tx_frequency / 100) * 100));
     ESP_LOGI(SH1106_TAG, "Writing frequency: %s", display_data);
     write_display_segment(TX_FREQ_SEG, (uint8_t *)display_data);
 
@@ -871,12 +897,15 @@ void app_main(void)
     /* bluetooth device name, connection mode and profile set up */
     bt_app_work_dispatch(bt_av_hdl_stack_evt, BT_APP_EVT_STACK_UP, NULL, 0, NULL);
 
+    /* Read FM Tx frequency from NVS */
+    read_nvs_data_u16(&tx_frequency, MAIN_STORAGE_NAMESPACE, FM_FREQ_KEY);
+
     /* I2C */
     i2c_master_bus_handle_t bus_handle;
     i2c_init(&bus_handle);
     ESP_LOGI(I2C_MASTER_TAG, "I2C initialized successfully");
 
-    // /* Si4713 */
+    /* Si4713 */
     i2c_add_device(bus_handle, &si4713_dev_handle, SI4173_SENSOR_ADDR);
     ESP_LOGI(SI4713_TAG, "Si4713 added to I2C bus.");
 

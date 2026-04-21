@@ -179,7 +179,7 @@ esp_err_t sh1106_set_page_address(i2c_master_dev_handle_t dev_handle, uint8_t ad
 
     sh1106_send_cmd(dev_handle, ctrl_byte, &data, sizeof(data));
 
-    ESP_LOGI(SH1106_TAG, "Page %u set", address);
+    // ESP_LOGI(SH1106_TAG, "Page %u set", address);
 
     return ESP_OK;
 }
@@ -211,7 +211,7 @@ esp_err_t sh1106_set_column_address(i2c_master_dev_handle_t dev_handle, uint8_t 
 
     sh1106_send_cmd(dev_handle, ctrl_byte, data, sizeof(data));
 
-    ESP_LOGI(SH1106_TAG, "Column %u set", address);
+    // ESP_LOGI(SH1106_TAG, "Column %u set", address);
 
     return ESP_OK;
 }
@@ -240,7 +240,7 @@ esp_err_t sh1106_write_display_data(i2c_master_dev_handle_t dev_handle, const ui
 
     sh1106_send_cmd(dev_handle, ctrl_byte, data, data_cnt);
 
-    ESP_LOGI(SH1106_TAG, "%u bytes written", data_cnt);
+    // ESP_LOGI(SH1106_TAG, "%u bytes written", data_cnt);
 
     return ESP_OK;
 }
