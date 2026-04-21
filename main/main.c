@@ -284,6 +284,14 @@ static void display_update_task_handler(void *arg)
 
             ESP_LOGI(ENCODER_TAG, "Playback state changed to %s.",
                      (ON_STATE == playback_state) ? "PLAY" : "PAUSE");
+
+            /* Send play/pause command via bluetooth */
+            uint8_t passthrough_cmd_code =
+                (ON_STATE == playback_state) ? ESP_AVRC_PT_CMD_PLAY : ESP_AVRC_PT_CMD_PAUSE;
+            esp_avrc_ct_send_passthrough_cmd(0, passthrough_cmd_code,
+                                             ESP_AVRC_PT_CMD_STATE_PRESSED);
+            esp_avrc_ct_send_passthrough_cmd(1, passthrough_cmd_code,
+                                             ESP_AVRC_PT_CMD_STATE_RELEASED);
         }
 
         if (0U != ulTaskNotifyTakeIndexed(TX_FREQ_INCREASE_EVT, pdTRUE, pdMS_TO_TICKS(10)))
