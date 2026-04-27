@@ -89,14 +89,149 @@ typedef union
 static void si4713_read_status(i2c_master_dev_handle_t dev_handle,
                                si4713_status_response_t *status_ptr,
                                si4713_status_response_t status_expected, uint32_t timeout_ms);
-static void si4713_read_response(i2c_master_dev_handle_t dev_handle, uint8_t *resp_buff,
-                                 uint8_t resp_len);
+static inline void si4713_read_response(i2c_master_dev_handle_t dev_handle, uint8_t *resp_buff,
+                                        uint8_t resp_len);
 static inline void si4713_send_cmd(i2c_master_dev_handle_t dev_handle, uint8_t cmd,
                                    const uint8_t *args, uint8_t arg_cnt);
+static esp_err_t si4713_tx_rds_ps(i2c_master_dev_handle_t dev_handle, const uint8_t *args);
+static esp_err_t si4713_tx_rds_buff(i2c_master_dev_handle_t dev_handle, const uint8_t *data);
+static inline uint16_t date_to_mjd(int y, int m, int d);
 
 /*==================================================================
     Function definitions
 ===================================================================*/
+
+/**
+ * @brief Converts date to MJD (Modified Julian Day) format
+ *
+ * @note The Modified Julian Day (MJD) is a simplified, continuous day count used in astronomy and
+ * geodesy to track time independent of the calendar, starting at midnight on November 17, 1858.
+ *
+ * @param[in] y Year.
+ * @param[in] m Month.
+ * @param[in] d Day of month.
+ * @return Date in MJD format.
+ */
+static inline uint16_t date_to_mjd(int y, int m, int d)
+{
+    if (m <= 2)
+    {
+        y--;
+        m += 12;
+    }
+
+    long mjd = (365 * y) + (y / 4) - (y / 100) + (y / 400) + ((153 * (m - 3) + 2) / 5) + d - 678882;
+
+    return (uint16_t)mjd;
+}
+
+/**
+ * @brief Executes TX_RDS_PS command.
+ *
+ * @param[in] dev_handle I2C master device handle.
+ * @param[in] args TX_RDS_PS command arguments.
+ * @return
+ *      - ESP_OK: TX_RDS_PS command successful.
+ *      - ESP_FAIL: TX_RDS_PS command failed.
+ */
+static esp_err_t si4713_tx_rds_ps(i2c_master_dev_handle_t dev_handle, const uint8_t *args)
+{
+    esp_err_t ret_val = ESP_FAIL;
+
+    si4713_send_cmd(dev_handle, TX_RDS_PS, &args[0], TX_RDS_PS_ARG_CNT);
+
+    si4713_status_response_t status;
+    const si4713_status_response_t status_expected = {.cts = 1U};
+    si4713_read_status(dev_handle, &status, status_expected, T_CTS_SHORT_MS);
+
+    if (status.val == status_expected.val)
+    {
+        ret_val = ESP_OK;
+        ESP_LOGI(SI4713_TAG, "TX_RDS_PS status = 0x%X", status.val);
+    }
+    else
+    {
+        ESP_LOGE(SI4713_TAG, "TX_RDS_PS status = 0x%X (expected: 0x%X)", status.val,
+                 status_expected.val);
+    }
+
+    return ret_val;
+}
+
+/**
+ * @brief Executes TX_RDS_BUFF command.
+ *
+ * @param[in] dev_handle I2C master device handle.
+ * @param[in] args TX_RDS_BUFF command arguments.
+ * @return
+ *      - ESP_OK: TX_RDS_BUFF command successful.
+ *      - ESP_FAIL: TX_RDS_BUFF command failed.
+ */
+static esp_err_t si4713_tx_rds_buff(i2c_master_dev_handle_t dev_handle, const uint8_t *args)
+{
+    esp_err_t ret_val = ESP_FAIL;
+
+    si4713_send_cmd(dev_handle, TX_RDS_BUFF, &args[0], TX_RDS_BUFF_ARG_CNT);
+
+    si4713_status_response_t status;
+    const si4713_status_response_t status_expected = {.cts = 1U};
+    si4713_read_status(dev_handle, &status, status_expected, T_CTS_SHORT_MS);
+
+    if (status.val == status_expected.val)
+    {
+        ret_val = ESP_OK;
+        ESP_LOGI(SI4713_TAG, "TX_RDS_BUFF status = 0x%X", status);
+    }
+    else
+    {
+        ESP_LOGE(SI4713_TAG, "TX_RDS_BUFF status = 0x%X (expected: 0x%X)", status,
+                 status_expected.val);
+    }
+
+    if (ESP_OK == ret_val)
+    {
+        uint8_t response[TX_RDS_BUFF_RESP_LEN];
+        si4713_read_response(dev_handle, response, sizeof(response));
+
+        if (0U != (response[TX_RDS_BUFF_RESP_FIFOMT_BYTE] & (1U << TX_RDS_BUFF_RESP_FIFOMT_POS)))
+        {
+            ESP_LOGI(SI4713_TAG, "\tRDS Group FIFO Buffer is empty");
+        }
+        else if (0U !=
+                 (response[TX_RDS_BUFF_RESP_CBUFWRAP_BYTE] & (1U << TX_RDS_BUFF_RESP_CBUFWRAP_POS)))
+        {
+            ESP_LOGI(SI4713_TAG, "\tRDS Group Circular Buffer has wrapped");
+        }
+        else if (0U !=
+                 (response[TX_RDS_BUFF_RESP_FIFOXMIT_BYTE] & (1U << TX_RDS_BUFF_RESP_FIFOXMIT_POS)))
+        {
+            ESP_LOGI(SI4713_TAG, "\tRDS Group has been transmitted from the circular buffer");
+        }
+        else if (0U !=
+                 (response[TX_RDS_BUFF_RESP_CBUFXMIT_BYTE] & (1U << TX_RDS_BUFF_RESP_CBUFXMIT_POS)))
+        {
+            ESP_LOGI(SI4713_TAG, "\tRDS Group has been transmitted from the FIFO buffer");
+        }
+        else if (0U != (response[TX_RDS_BUFF_RESP_RDSPSXMIT_BYTE] &
+                        (1U << TX_RDS_BUFF_RESP_RDSPSXMIT_POS)))
+        {
+            ESP_LOGI(SI4713_TAG, "\tRDS PS Group has been transmitted");
+        }
+        ESP_LOGI(SI4713_TAG, "\tAvailable circular buffer blocks = %d",
+                 response[TX_RDS_BUFF_RESP_CBAVAIL_BYTE]);
+        ESP_LOGI(SI4713_TAG, "\tUsed circular buffer blocks = %d",
+                 response[TX_RDS_BUFF_RESP_CBUSED_BYTE]);
+        ESP_LOGI(SI4713_TAG, "\tAvailable FIFO blocks = %d",
+                 response[TX_RDS_BUFF_RESP_FIFOAVAIL_BYTE]);
+        ESP_LOGI(SI4713_TAG, "\tUsed FIFO blocks = %d", response[TX_RDS_BUFF_RESP_FIFOUSED_BYTE]);
+    }
+    else
+    {
+        ESP_LOGE(SI4713_TAG, "CTS timeout expired");
+    }
+
+    return ret_val;
+}
 
 /**
  * @brief Read status value from Si4713.
@@ -162,7 +297,7 @@ esp_err_t si4713_powerup_analog(i2c_master_dev_handle_t dev_handle, uint16_t val
     uint8_t args[2];
     args[0] = (val >> 8U) & 0xFFU;
     args[1] = val & 0xFFU;
-    si4713_send_cmd(dev_handle, POWER_UP, args, sizeof(args));
+    si4713_send_cmd(dev_handle, POWER_UP, &args[0], sizeof(args));
 
     si4713_status_response_t status;
     const si4713_status_response_t status_expected = {.cts = 1U};
@@ -198,7 +333,7 @@ esp_err_t si4713_set_property(i2c_master_dev_handle_t dev_handle, si4713_propert
     args[2] = (uint16_t)property & 0xFFU;
     args[3] = (val >> 8U) & 0xFFU;
     args[4] = val & 0xFFU;
-    si4713_send_cmd(dev_handle, SET_PROPERTY, args, sizeof(args));
+    si4713_send_cmd(dev_handle, SET_PROPERTY, &args[0], sizeof(args));
 
     si4713_status_response_t status;
     const si4713_status_response_t status_expected = {.cts = 1U};
@@ -207,12 +342,12 @@ esp_err_t si4713_set_property(i2c_master_dev_handle_t dev_handle, si4713_propert
     if (status.val == status_expected.val)
     {
         ret_val = ESP_OK;
-        ESP_LOGI(SI4713_TAG, "SET_PROPERTY 0x%X status = 0x%X", property, status);
+        ESP_LOGI(SI4713_TAG, "SET_PROPERTY 0x%X status = 0x%X", property, status.val);
     }
     else
     {
-        ESP_LOGE(SI4713_TAG, "SET_PROPERTY 0x%X status = 0x%X (expected: 0x%X)", property, status,
-                 status_expected.val);
+        ESP_LOGE(SI4713_TAG, "SET_PROPERTY 0x%X status = 0x%X (expected: 0x%X)", property,
+                 status.val, status_expected.val);
     }
 
     return ret_val;
@@ -290,7 +425,7 @@ esp_err_t si4713_tx_tune_power(i2c_master_dev_handle_t dev_handle, uint16_t val)
     args[1] = 0x00U;
     args[2] = (val >> 8U) & 0xFFU;
     args[3] = val & 0xFFU;
-    si4713_send_cmd(dev_handle, TX_TUNE_POWER, args, sizeof(args));
+    si4713_send_cmd(dev_handle, TX_TUNE_POWER, &args[0], sizeof(args));
 
     si4713_status_response_t status;
     const si4713_status_response_t status_expected = {.cts = 1U};
@@ -327,7 +462,7 @@ esp_err_t si4713_tx_tune_freq(i2c_master_dev_handle_t dev_handle, uint16_t val)
     args[0] = 0x00U;
     args[1] = (val >> 8U) & 0xFFU;
     args[2] = val & 0xFFU;
-    si4713_send_cmd(dev_handle, TX_TUNE_FREQ, args, sizeof(args));
+    si4713_send_cmd(dev_handle, TX_TUNE_FREQ, &args[0], sizeof(args));
 
     si4713_status_response_t status;
     const si4713_status_response_t status_expected = {.cts = 1U};
@@ -372,10 +507,6 @@ esp_err_t si4713_get_int_status(i2c_master_dev_handle_t dev_handle, uint8_t stat
     {
         si4713_send_cmd(dev_handle, GET_INT_STATUS, NULL, 0U);
         si4713_read_status(dev_handle, &status, (si4713_status_response_t)status_expected_val, 0U);
-        if (status_expected_val != status.val)
-        {
-            WAIT_MS(10);
-        }
     } while ((status_expected_val != status.val) && ((xTaskGetTickCount() - start) < timeout));
 
     if (status.val == status_expected_val)
@@ -488,6 +619,202 @@ esp_err_t si4713_tx_asq_status(i2c_master_dev_handle_t dev_handle)
     {
         ESP_LOGE(SI4713_TAG, "CTS timeout expired");
     }
+
+    return ret_val;
+}
+
+/**
+ * @brief Loads or clears the program service buffer.
+ *
+ * @note PS text has to be max. 96 characters long.
+ * The full string is divided into 4 character blocks.
+ * If text length is not a multiple of 4, the remaining characters are [SPACE].
+ *
+ * @param[in] dev_handle I2C master device handle.
+ * @param[in] text String to be put in PS buffer.
+ * @param[in] text_len Length of text.
+ * @return
+ *      - ESP_OK: TX_RDS_PS command successful.
+ *      - ESP_FAIL: TX_RDS_PS command failed.
+ *      - ESP_ERR_INVALID_SIZE: Too long text length.
+ *      - ESP_ERR_INVALID_ARG: NULL given as char array pointer.
+ */
+esp_err_t si4713_set_program_service_buffer(i2c_master_dev_handle_t dev_handle, const char *text,
+                                            uint8_t text_len)
+{
+    if (NULL == text)
+    {
+        ESP_LOGE(SI4713_TAG, "Invalid RDS PS NULL argument");
+        return ESP_ERR_INVALID_ARG;
+    }
+    else if (96U < text_len)
+    {
+        ESP_LOGE(SI4713_TAG, "Too long RDS PS text.");
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    uint8_t args[5];
+
+    if (NULL != text)
+    {
+        ESP_LOGI(SI4713_TAG, "Writing %s to PS", text);
+    }
+
+    int curr_char_idx = 0; // Current character index
+    int psid = 0;          // PS data id
+    while (curr_char_idx < text_len)
+    {
+        uint8_t characters_left = text_len - curr_char_idx;
+        uint8_t substring_len = ((4 <= characters_left) ? 4 : characters_left);
+        args[0] = psid;
+
+        /* Text starts at index 1 */
+        for (int i = 1; i < sizeof(args); i++)
+        {
+            if (i < (1 + substring_len))
+            {
+                /* Place text into args */
+                args[i] = (uint8_t)text[curr_char_idx];
+            }
+            else
+            {
+                /* Fill unused arguments with 0x20=[SPACE] */
+                args[i] = 0x20U;
+            }
+        }
+
+        si4713_tx_rds_ps(dev_handle, &args[0]);
+        curr_char_idx += 4;
+        psid++;
+    }
+
+    return ESP_OK;
+}
+
+/**
+ * @brief Loads or clears the RDS group buffer FIFO or circular buffer.
+ *
+ * @note RDS buffer text has to be max. 64 characters long.
+ * The full string is divided into 4 character blocks.
+ * If text length is not a multiple of 4, the remaining characters are [SPACE].
+ *
+ * @param[in] dev_handle I2C master device handle.
+ * @param[in] fifo FIFO buffer used if set. Circular buffer used otherwise.
+ * @param[in] ldbuff RDS group buffer loaded if set.
+ * @param[in] mtbuff RDS group buffer emptied if set.
+ * @param[in] intack RDS group buffer interrupt cleared if set.
+ * @param[in] text String to be put in RDS buffer.
+ * @param[in] text_len Length of text.
+ * @return
+ *      - ESP_OK: TX_RDS_BUFF command successful.
+ *      - ESP_FAIL: TX_RDS_BUFF command failed.
+ *      - ESP_ERR_INVALID_SIZE: Too long text length.
+ *      - ESP_ERR_INVALID_ARG: NULL given as char array pointer and text_len > 0.
+ */
+esp_err_t si4713_set_rds_buffer(i2c_master_dev_handle_t dev_handle, bool fifo, bool ldbuff,
+                                bool mtbuff, bool intack, const char *text, uint8_t text_len)
+{
+    if (64U < text_len)
+    {
+        ESP_LOGE(SI4713_TAG, "Too long RDS buffer text.");
+        return ESP_ERR_INVALID_SIZE;
+    }
+    else if ((NULL == text) && (text_len > 0U))
+    {
+        ESP_LOGE(SI4713_TAG, "Invalid RDS buffer NULL argument");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    uint8_t args[7];
+    args[0] = ((true == fifo) ? (1U << 7) : 0U);
+    args[0] |= ((true == ldbuff) ? (1U << 2) : 0U);
+    args[0] |= ((true == mtbuff) ? (1U << 1) : 0U);
+    args[0] |= ((true == intack) ? 1U : 0U);
+    args[1] = RDS_GT_2A;
+
+    if (NULL != text)
+    {
+        ESP_LOGI(SI4713_TAG, "Writing %s to RDS buffer", text);
+    }
+
+    int curr_char_idx = 0; // Current character index
+    int location = 0;      // Text location
+    do
+    {
+        uint8_t characters_left = text_len - curr_char_idx;
+        uint8_t substring_len = ((4 <= characters_left) ? 4 : characters_left);
+        args[2] = location;
+
+        /* Text starts at index 3 */
+        for (int i = 3; i < sizeof(args); i++)
+        {
+            if (i < (3 + substring_len))
+            {
+                /* Place text into args */
+                args[i] = (uint8_t)text[curr_char_idx];
+            }
+            else
+            {
+                /* Fill unused arguments with 0x20=[SPACE] */
+                args[i] = 0x20U;
+            }
+        }
+
+        si4713_tx_rds_buff(dev_handle, &args[0]);
+        curr_char_idx += 4;
+        location++;
+
+        // emptying buffer only once
+        if (0U != (args[0] & (1U << 1)))
+        {
+            args[0] &= ~(1U << 1);
+        }
+    } while (curr_char_idx < text_len);
+
+    return ESP_OK;
+}
+
+/**
+ * @brief Broadcast time using RDS group 4A.
+ *
+ * @param[in] dev_handle I2C master device handle.
+ * @param[in] fifo FIFO buffer used if set. Circular buffer used otherwise.
+ * @param[in] ldbuff RDS group buffer loaded if set.
+ * @param[in] mtbuff RDS group buffer emptied if set.
+ * @param[in] intack RDS group buffer interrupt cleared if set.
+ * @param[in] time Time to be broadcast.
+ * @return
+ *      - ESP_OK: TX_RDS_BUFF command successful.
+ *      - ESP_FAIL: TX_RDS_BUFF command failed.
+ */
+esp_err_t si4713_set_time(i2c_master_dev_handle_t dev_handle, bool fifo, bool ldbuff, bool mtbuff,
+                          bool intack, const si4713_time_t *time)
+{
+    uint16_t mjd = date_to_mjd(time->year, time->month, time->day);
+
+    uint8_t args[7];
+    args[0] = ((true == fifo) ? (1U << 7) : 0U);
+    args[0] |= ((true == ldbuff) ? (1U << 2) : 0U);
+    args[0] |= ((true == mtbuff) ? (1U << 1) : 0U);
+    args[0] |= ((true == intack) ? 1U : 0U);
+    args[1] = RDS_GT_4A;
+    args[2] = mjd >> 15U;
+    args[3] = (mjd & 0x7FFFU) >> 7U;
+    args[4] = ((mjd & 0x7FU) << 1U) | ((time->hour & 0x10U) >> 4U);
+    args[5] = ((time->hour & 0x0FU) << 4U) | ((time->minute & 0x3C0U) >> 2U);
+    args[6] = (time->minute & 0x3U) << 6U;
+
+    if (time->time_offset < 0)
+    {
+        /* 0 = + (east of Greenwich), 1 = − */
+        args[6] |= (1U << 6U) | (((uint8_t)(-time->time_offset) << 1U) | 0x1FU);
+    }
+    else
+    {
+        args[6] |= (((uint8_t)time->time_offset << 1U) | 0x1FU);
+    }
+
+    esp_err_t ret_val = si4713_tx_rds_buff(dev_handle, &args[0]);
 
     return ret_val;
 }

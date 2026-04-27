@@ -93,10 +93,19 @@ typedef enum
         0x2C06, /* Si4713 Only. RDS Program Service Alternate Frequency. This provides the ability
                    to inform the receiver of a single alternate frequency using AF Method A coding
                    and is transmitted along with the RDS_PS Groups. 0xE0E0 */
-    TX_RDS_FIFO_SIZESi4713 =
-        0x2C07, /* Only. Number of blocks reserved for the FIFO. Note that the value written must be
-                   one larger than the desired FIFO size. 0x0000 */
+    TX_RDS_FIFO_SIZE = 0x2C07, /* Only. Number of blocks reserved for the FIFO. Note that the value
+                                  written must be one larger than the desired FIFO size. 0x0000 */
 } si4713_property_t;
+
+typedef struct
+{
+    uint8_t day;     /* Day of month */
+    uint8_t month;   /* Month 1 to 12 */
+    uint16_t year;   /* Year > 1858*/
+    uint8_t hour;    /* Hour 0 to 23 */
+    uint8_t minute;  /* Minute 0 to 59 */
+    int time_offset; /* Local time offset -15 to 15*/
+} si4713_time_t;
 
 /*==================================================================
     Exported objects
@@ -116,5 +125,11 @@ esp_err_t si4713_get_int_status(i2c_master_dev_handle_t dev_handle, uint8_t stat
                                 uint32_t timeout_ms);
 esp_err_t si4713_tx_tune_status(i2c_master_dev_handle_t dev_handle);
 esp_err_t si4713_tx_asq_status(i2c_master_dev_handle_t dev_handle);
+esp_err_t si4713_set_program_service_buffer(i2c_master_dev_handle_t dev_handle, const char *text,
+                                            uint8_t text_len);
+esp_err_t si4713_set_rds_buffer(i2c_master_dev_handle_t dev_handle, bool fifo, bool ldbuff,
+                                bool mtbuff, bool intack, const char *text, uint8_t text_len);
+esp_err_t si4713_set_time(i2c_master_dev_handle_t dev_handle, bool fifo, bool ldbuff, bool mtbuff,
+                          bool intack, const si4713_time_t *time);
 
 #endif /* __SI4713_H__ */

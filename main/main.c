@@ -10,8 +10,6 @@
 
 #include "esp_log.h"
 #include "esp_system.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 #include <inttypes.h>
@@ -32,6 +30,7 @@
 #include "driver/gpio.h"
 #include "driver/gptimer.h"
 #include "i2c_master_app.h"
+#include "main.h"
 #include "sh1106.h"
 #include "sh1106_cfg.h"
 #include "si4713.h"
@@ -45,8 +44,8 @@
 #define MAIN_STORAGE_NAMESPACE "storage"
 #define FM_FREQ_KEY "fm_tx_freq"
 
-/* Log tag */
-#define ENCODER_TAG "ENCODER"
+/* Log tags */
+#define UI_EVT_TAG "UI_EVT"
 #define NVS_TAG "NVS"
 
 /* Encoder pins */
@@ -54,20 +53,17 @@
 #define GPIO_INPUT_ENCODER_SIB CONFIG_GPIO_INPUT_ENCODER_SIB
 #define GPIO_INPUT_ENCODER_SW CONFIG_GPIO_INPUT_ENCODER_SW
 
-/* GPIO input/output level */
-#define GPIO_LOW 0
-#define GPIO_HIGH 1
-
 /* Value by which the tx frequency is decreased or increased with every encoder step (in 10kHz
  * units) */
 #define ENCODER_STEP_VAL 10U
 #define KNOB_DEBOUNCING_TIME_US 5000U
 
-#define ICON_HEIGHT_PX 24U
-#define ICON_WIDTH_PX 16U
+/* Playback state icon dimensions */
+#define PB_STATE_ICON_HEIGHT_PX 24U
+#define PB_STATE_ICON_WIDTH_PX 16U
 
 /*==================================================================
-    Function-like macros
+Function-like macros
 ===================================================================*/
 
 /* Waits for a specific time in ms  */
@@ -85,21 +81,13 @@
 #define INT_TO_ASCII_CHAR(x) ((x) + 0x30U)
 
 /*==================================================================
-    Local types
+Local types
 ===================================================================*/
 
 /* Event for stack up */
 enum
 {
     BT_APP_EVT_STACK_UP = 0,
-};
-
-/* Encoder knob events */
-enum
-{
-    TX_FREQ_INCREASE_EVT = 0,
-    TX_FREQ_DECREASE_EVT = 1,
-    PLAYBACK_STATE_CHANGE_EVT = 2,
 };
 
 /* Display segments */
@@ -112,30 +100,35 @@ enum
 };
 
 /*==================================================================
-    Local objects
+Local objects
 ===================================================================*/
 
 static const char local_device_name[] = CONFIG_EXAMPLE_LOCAL_DEVICE_NAME;
 static uint16_t tx_frequency = TX_TUNE_FREQ_DEFAULT_VAL;
 
-static TaskHandle_t display_update_task_handle = NULL;
 static i2c_master_dev_handle_t sh1106_dev_handle = NULL;
 static i2c_master_dev_handle_t si4713_dev_handle = NULL;
 static gptimer_handle_t debounce_timer = NULL;
-static int knob_debounce_event;
+static ui_event_t knob_debounce_event;
 
 /* Play/Pause bitmaps */
-const uint8_t icon_play[(ICON_HEIGHT_PX / PAGE_HEIGHT) * ICON_WIDTH_PX] = {
+const uint8_t icon_play[(PB_STATE_ICON_HEIGHT_PX / PAGE_HEIGHT) * PB_STATE_ICON_WIDTH_PX] = {
     0x00, 0x00, 0x00, 0x00, 0x00, 0xF0, 0xE0, 0xC0, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7E, 0x3C, 0x18, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x0F, 0x07, 0x03, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-const uint8_t icon_pause[(ICON_HEIGHT_PX / PAGE_HEIGHT) * ICON_WIDTH_PX] = {
+const uint8_t icon_pause[(PB_STATE_ICON_HEIGHT_PX / PAGE_HEIGHT) * PB_STATE_ICON_WIDTH_PX] = {
     0x00, 0x00, 0x00, 0xE0, 0xE0, 0xE0, 0xE0, 0x00, 0x00, 0xE0, 0xE0, 0xE0, 0xE0, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x07, 0x07, 0x07, 0x07, 0x00, 0x00, 0x07, 0x07, 0x07, 0x07, 0x00, 0x00, 0x00};
 
 /*==================================================================
-    Local function declarations
+Global object definitions
+===================================================================*/
+
+TaskHandle_t ui_evt_task_handle = NULL;
+
+/*==================================================================
+Local function declarations
 ===================================================================*/
 
 /* Inline functions */
@@ -145,7 +138,7 @@ static inline void tune_si4713(void);
 static inline void audio_dynamic_range_control_si4713(void);
 static inline void configure_sh1106(void);
 static inline void write_initial_display_contents(void);
-static inline void init_encoder_control(void);
+static inline void rotation_sensor_init(void);
 
 /* Handlers and callbacks */
 static void bt_app_dev_cb(esp_bt_dev_cb_event_t event, esp_bt_dev_cb_param_t *param);
@@ -162,7 +155,7 @@ static esp_err_t store_nvs_data_u16(uint16_t data, const char *namespace, const 
 static esp_err_t read_nvs_data_u16(uint16_t *data_ptr, const char *namespace, const char *key);
 
 /*==================================================================
-    Function definitions
+Function definitions
 ===================================================================*/
 
 /**
@@ -227,7 +220,7 @@ static bool IRAM_ATTR knob_debounce_timer_cb(gptimer_handle_t timer,
         case TX_FREQ_DECREASE_EVT:
             if (GPIO_LOW == gpio_get_level(GPIO_INPUT_ENCODER_SIA))
             {
-                vTaskNotifyGiveIndexedFromISR(display_update_task_handle, TX_FREQ_DECREASE_EVT,
+                vTaskNotifyGiveIndexedFromISR(ui_evt_task_handle, TX_FREQ_DECREASE_EVT,
                                               &xHigherPriorityTaskWoken);
             }
             break;
@@ -235,7 +228,7 @@ static bool IRAM_ATTR knob_debounce_timer_cb(gptimer_handle_t timer,
         case TX_FREQ_INCREASE_EVT:
             if (GPIO_LOW == gpio_get_level(GPIO_INPUT_ENCODER_SIB))
             {
-                vTaskNotifyGiveIndexedFromISR(display_update_task_handle, TX_FREQ_INCREASE_EVT,
+                vTaskNotifyGiveIndexedFromISR(ui_evt_task_handle, TX_FREQ_INCREASE_EVT,
                                               &xHigherPriorityTaskWoken);
             }
             break;
@@ -243,7 +236,7 @@ static bool IRAM_ATTR knob_debounce_timer_cb(gptimer_handle_t timer,
         case PLAYBACK_STATE_CHANGE_EVT:
             if (GPIO_LOW == gpio_get_level(GPIO_INPUT_ENCODER_SW))
             {
-                vTaskNotifyGiveIndexedFromISR(display_update_task_handle, PLAYBACK_STATE_CHANGE_EVT,
+                vTaskNotifyGiveIndexedFromISR(ui_evt_task_handle, PLAYBACK_STATE_CHANGE_EVT,
                                               &xHigherPriorityTaskWoken);
             }
             break;
@@ -266,9 +259,9 @@ static bool IRAM_ATTR knob_debounce_timer_cb(gptimer_handle_t timer,
  *
  * @param[in] arg Task argument - not used.
  */
-static void display_update_task_handler(void *arg)
+static void ui_evt_task_handler(void *arg)
 {
-    bool playback_state = ON_STATE;
+    esp_a2d_audio_state_t playback_state = ESP_A2D_AUDIO_STATE_SUSPEND;
     const uint8_t *curr_icon = NULL;
     bool frequency_changed = false;
 
@@ -277,29 +270,44 @@ static void display_update_task_handler(void *arg)
         /* Playback state changed */
         if (0U != ulTaskNotifyTakeIndexed(PLAYBACK_STATE_CHANGE_EVT, pdTRUE, pdMS_TO_TICKS(10)))
         {
-            if (ON_STATE == playback_state)
+            esp_a2d_connection_state_t conn_state = bt_get_a2d_connection_state();
+
+            if (ESP_A2D_CONNECTION_STATE_CONNECTED == conn_state)
             {
-                curr_icon = &icon_pause[0];
-                playback_state = OFF_STATE;
+                if (ESP_A2D_AUDIO_STATE_STARTED == playback_state)
+                {
+                    curr_icon = &icon_pause[0];
+                    playback_state = ESP_A2D_AUDIO_STATE_SUSPEND;
+                }
+                else if (ESP_A2D_AUDIO_STATE_SUSPEND == playback_state)
+                {
+                    curr_icon = &icon_play[0];
+                    playback_state = ESP_A2D_AUDIO_STATE_STARTED;
+                }
+
+                write_display_segment(PLAYBACK_STATE_SEG, curr_icon);
+                ESP_LOGI(UI_EVT_TAG, "Playback state changed to %s.",
+                         (ESP_A2D_AUDIO_STATE_STARTED == playback_state) ? "PLAY" : "PAUSE");
+
+                /* Check if bluetooth playback state needs updating */
+                if (bt_get_a2d_audio_state() != playback_state)
+                {
+                    /* Send play/pause command via bluetooth */
+                    uint8_t passthrough_cmd_code = (ESP_A2D_AUDIO_STATE_STARTED == playback_state)
+                                                       ? ESP_AVRC_PT_CMD_PLAY
+                                                       : ESP_AVRC_PT_CMD_PAUSE;
+                    esp_avrc_ct_send_passthrough_cmd(0, passthrough_cmd_code,
+                                                     ESP_AVRC_PT_CMD_STATE_PRESSED);
+                    esp_avrc_ct_send_passthrough_cmd(1, passthrough_cmd_code,
+                                                     ESP_AVRC_PT_CMD_STATE_RELEASED);
+                }
             }
-            else if (OFF_STATE == playback_state)
+            else if (ESP_A2D_CONNECTION_STATE_DISCONNECTED == conn_state)
             {
-                curr_icon = &icon_play[0];
-                playback_state = ON_STATE;
+                playback_state = ESP_A2D_AUDIO_STATE_SUSPEND;
+                /* clear playback state segment */
+                write_display_segment(PLAYBACK_STATE_SEG, NULL);
             }
-
-            write_display_segment(PLAYBACK_STATE_SEG, curr_icon);
-
-            ESP_LOGI(ENCODER_TAG, "Playback state changed to %s.",
-                     (ON_STATE == playback_state) ? "PLAY" : "PAUSE");
-
-            /* Send play/pause command via bluetooth */
-            uint8_t passthrough_cmd_code =
-                (ON_STATE == playback_state) ? ESP_AVRC_PT_CMD_PLAY : ESP_AVRC_PT_CMD_PAUSE;
-            esp_avrc_ct_send_passthrough_cmd(0, passthrough_cmd_code,
-                                             ESP_AVRC_PT_CMD_STATE_PRESSED);
-            esp_avrc_ct_send_passthrough_cmd(1, passthrough_cmd_code,
-                                             ESP_AVRC_PT_CMD_STATE_RELEASED);
         }
 
         /* FM frequency value increased */
@@ -343,7 +351,7 @@ static void display_update_task_handler(void *arg)
             sprintf(display_data, "%3u.%02u", (tx_frequency / 100),
                     (tx_frequency - (tx_frequency / 100) * 100));
             write_display_segment(TX_FREQ_SEG, (uint8_t *)display_data);
-            ESP_LOGI(ENCODER_TAG, "TX frequency changed to %s", display_data);
+            ESP_LOGI(UI_EVT_TAG, "TX frequency changed to %s", display_data);
 
             frequency_changed = false;
         }
@@ -632,6 +640,20 @@ static inline void configure_si4713(void)
     si4713_set_property(si4713_dev_handle, TX_PILOT_DEVIATION, TX_PILOT_DEVIATION_DEFAULT_VAL);
 }
 
+/* Si4713 subcomponents enable function */
+static inline void enable_si4713(bool rds, bool stereo, bool pilot)
+{
+    uint8_t val = ((true == rds) ? (1U << 2) : 0U);
+    val |= ((true == stereo) ? (1U << 1) : 0U);
+    val |= ((true == pilot) ? 1U : 0U);
+
+    si4713_set_property(si4713_dev_handle, TX_COMPONENT_ENABLE, val);
+
+    uint8_t status_expected = (uint8_t)((1U << STATUS_CTS_BIT_POS) | (1U << STATUS_RDSINT_BIT_POS));
+    si4713_get_int_status(si4713_dev_handle, status_expected, T_COMP_MS);
+    si4713_set_rds_buffer(si4713_dev_handle, false, false, false, true, NULL, 0U);
+}
+
 /* Si4713 tuning function */
 static inline void tune_si4713(void)
 {
@@ -645,7 +667,32 @@ static inline void tune_si4713(void)
     status_expected = (uint8_t)((1U << STATUS_CTS_BIT_POS) | (1U << STATUS_STCINT_BIT_POS));
     si4713_get_int_status(si4713_dev_handle, status_expected, T_STC_LONG_MS);
     si4713_tx_tune_status(si4713_dev_handle); // to clean the STCINT bit
-    si4713_set_property(si4713_dev_handle, TX_COMPONENT_ENABLE, TX_COMPONENT_ENABLE_DEFAULT_VAL);
+}
+
+static inline void configure_rds_si4713(void)
+{
+    si4713_set_property(si4713_dev_handle, TX_RDS_DEVIATION, TX_RDS_DEVIATION_DEFAULT_VAL);
+    si4713_set_property(si4713_dev_handle, TX_RDS_INTERRUPT_SOURCE,
+                        TX_RDS_INTERRUPT_SOURCE_DEFAULT_VAL);
+    si4713_set_property(si4713_dev_handle, TX_RDS_PI, TX_RDS_PI_DEFAULT_VAL);
+    si4713_set_property(si4713_dev_handle, TX_RDS_PS_MIX, TX_RDS_PS_MIX_DEFAULT_VAL);
+    si4713_set_property(si4713_dev_handle, TX_RDS_PS_MISC, TX_RDS_PS_MISC_DEFAULT_VAL);
+    si4713_set_property(si4713_dev_handle, TX_RDS_PS_REPEAT_COUNT,
+                        TX_RDS_PS_REPEAT_COUNT_DEFAULT_VAL);
+    si4713_set_property(si4713_dev_handle, TX_RDS_PS_MESSAGE_COUNT,
+                        TX_RDS_PS_MESSAGE_COUNT_DEFAULT_VAL);
+    si4713_set_property(si4713_dev_handle, TX_RDS_PS_AF, TX_RDS_PS_AF_DEFAULT_VAL);
+    si4713_set_property(si4713_dev_handle, TX_RDS_FIFO_SIZE, TX_RDS_FIFO_SIZE_DEFAULT_VAL);
+
+    const char *ps_text = "SILABS SI471X RDS DEMO";
+    si4713_set_program_service_buffer(si4713_dev_handle, ps_text, strlen(ps_text));
+    const char *radio_text = "SILICON LABORATORIES SI471X RDS DEMO";
+    si4713_set_rds_buffer(si4713_dev_handle, false, true, true, false, radio_text,
+                          strlen(radio_text));
+    /* 23 April 2026 23:19 (GMT+1) */
+    si4713_time_t time = {
+        .day = 23U, .month = 4U, .year = 2026U, .hour = 23U, .minute = 19U, .time_offset = 1};
+    si4713_set_time(si4713_dev_handle, true, true, false, false, &time);
 }
 
 /* Si4713 audio dynamic range control function */
@@ -668,7 +715,7 @@ static inline void audio_dynamic_range_control_si4713(void)
     si4713_set_property(si4713_dev_handle, TX_ASQ_INTERRUPT_SOURCE,
                         TX_ASQ_INTERRUPT_SOURCE_DEFAULT_VAL);
     status_expected = (uint8_t)((1U << STATUS_CTS_BIT_POS) | (1U << STATUS_ASQINT_BIT_POS));
-    si4713_get_int_status(si4713_dev_handle, status_expected, 1U);
+    si4713_get_int_status(si4713_dev_handle, status_expected, T_COMP_MS);
     si4713_tx_asq_status(si4713_dev_handle); // to clean the ASQINT bit
 }
 
@@ -705,12 +752,10 @@ static inline void write_initial_display_contents(void)
 
     /* "FM" suffix */
     write_display_segment(FM_SUFFIX_SEG, (uint8_t *)" FM");
-    /* Play icon default */
-    write_display_segment(PLAYBACK_STATE_SEG, &icon_play[0]);
 }
 
 /* Initializes encoder pins and GPIO interrupts. */
-static inline void init_encoder_control(void)
+static inline void rotation_sensor_init(void)
 {
     /* Initialize debounce timer */
     gptimer_config_t timer_config = {
@@ -803,11 +848,19 @@ static void write_display_segment(int segment, const uint8_t *data)
         uint8_t column_address = PLAYBACK_STATE_COLUMN_ADDRESS;
         uint8_t page_address = PLAYBACK_STATE_PAGE_ADDRESS;
 
-        for (uint8_t i = 0; i < (ICON_HEIGHT_PX / PAGE_HEIGHT); i++)
+        for (uint8_t i = 0U; i < (PB_STATE_ICON_HEIGHT_PX / PAGE_HEIGHT); i++)
         {
-            sh1106_set_page_address(sh1106_dev_handle, (page_address + i));
-            sh1106_set_column_address(sh1106_dev_handle, column_address);
-            sh1106_write_display_data(sh1106_dev_handle, &data[i * ICON_WIDTH_PX], ICON_WIDTH_PX);
+            if (NULL != data)
+            {
+                sh1106_set_page_address(sh1106_dev_handle, (page_address + i));
+                sh1106_set_column_address(sh1106_dev_handle, column_address);
+                sh1106_write_display_data(sh1106_dev_handle, &data[i * PB_STATE_ICON_WIDTH_PX],
+                                          PB_STATE_ICON_WIDTH_PX);
+            }
+            else
+            {
+                sh1106_clear_page(sh1106_dev_handle, (page_address + i));
+            }
         }
     }
     else if (FM_SUFFIX_SEG == segment)
@@ -911,8 +964,10 @@ void app_main(void)
 
     powerup_si4713();
     configure_si4713();
-    tune_si4713();
     audio_dynamic_range_control_si4713();
+    tune_si4713();
+    configure_rds_si4713();
+    enable_si4713(true, true, true);
 
     /* SH1106 */
     i2c_add_device(bus_handle, &sh1106_dev_handle, SH1106_SENSOR_ADDR);
@@ -931,7 +986,6 @@ void app_main(void)
 
     write_initial_display_contents();
     /* Create a task for updating the display contents */
-    xTaskCreate(display_update_task_handler, "display_update_task", 3072U, NULL, 10,
-                &display_update_task_handle);
-    init_encoder_control();
+    xTaskCreate(ui_evt_task_handler, "ui_evt_task", 3072U, NULL, 10, &ui_evt_task_handle);
+    rotation_sensor_init();
 }

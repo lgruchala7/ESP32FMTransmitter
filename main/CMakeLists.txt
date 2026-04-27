@@ -1,4 +1,4 @@
-idf_component_register(SRCS "sh1106_cfg.c" 
+idf_component_register(SRCS "rotation_sensor.c" "sh1106_cfg.c" 
                             "sh1106.c" 
                             "bt_app_av.c"
                             "bt_app_core.c"

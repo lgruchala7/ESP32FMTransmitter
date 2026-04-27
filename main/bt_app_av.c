@@ -18,6 +18,7 @@
 #include "esp_bt_device.h"
 #include "esp_bt_main.h"
 #include "esp_gap_bt_api.h"
+#include "main.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -71,8 +72,9 @@ static void bt_av_hdl_avrc_tg_evt(uint16_t event, void *p_param);
  ******************************/
 
 static uint32_t s_pkt_cnt = 0; /* count for audio packet */
-static esp_a2d_audio_state_t s_audio_state = ESP_A2D_AUDIO_STATE_STOPPED;
+static esp_a2d_audio_state_t s_audio_state = ESP_A2D_AUDIO_STATE_SUSPEND;
 /* audio stream datapath state */
+static esp_a2d_connection_state_t s_a2d_conn_state = ESP_A2D_CONNECTION_STATE_DISCONNECTED;
 static const char *s_a2d_conn_state_str[] = {"Disconnected", "Connecting", "Connected",
                                              "Disconnecting"};
 /* connection state in string */
@@ -271,21 +273,24 @@ static void bt_av_hdl_a2d_evt(uint16_t event, void *p_param)
         {
             a2d = (esp_a2d_cb_param_t *)(p_param);
             uint8_t *bda = a2d->conn_stat.remote_bda;
+            s_a2d_conn_state = a2d->conn_stat.state;
             ESP_LOGI(BT_AV_TAG, "A2DP connection state: %s, [%02x:%02x:%02x:%02x:%02x:%02x]",
-                     s_a2d_conn_state_str[a2d->conn_stat.state], bda[0], bda[1], bda[2], bda[3],
-                     bda[4], bda[5]);
-            if (a2d->conn_stat.state == ESP_A2D_CONNECTION_STATE_DISCONNECTED)
+                     s_a2d_conn_state_str[s_a2d_conn_state], bda[0], bda[1], bda[2], bda[3], bda[4],
+                     bda[5]);
+            if (s_a2d_conn_state == ESP_A2D_CONNECTION_STATE_DISCONNECTED)
             {
                 esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
                 bt_i2s_driver_uninstall();
                 bt_i2s_task_shut_down();
+
+                xTaskNotifyGiveIndexed(ui_evt_task_handle, PLAYBACK_STATE_CHANGE_EVT);
             }
-            else if (a2d->conn_stat.state == ESP_A2D_CONNECTION_STATE_CONNECTED)
+            else if (s_a2d_conn_state == ESP_A2D_CONNECTION_STATE_CONNECTED)
             {
                 esp_bt_gap_set_scan_mode(ESP_BT_NON_CONNECTABLE, ESP_BT_NON_DISCOVERABLE);
                 bt_i2s_task_start_up();
             }
-            else if (a2d->conn_stat.state == ESP_A2D_CONNECTION_STATE_CONNECTING)
+            else if (s_a2d_conn_state == ESP_A2D_CONNECTION_STATE_CONNECTING)
             {
                 bt_i2s_driver_install();
             }
@@ -301,6 +306,11 @@ static void bt_av_hdl_a2d_evt(uint16_t event, void *p_param)
             if (ESP_A2D_AUDIO_STATE_STARTED == a2d->audio_stat.state)
             {
                 s_pkt_cnt = 0;
+                xTaskNotifyGiveIndexed(ui_evt_task_handle, PLAYBACK_STATE_CHANGE_EVT);
+            }
+            else if (ESP_A2D_AUDIO_STATE_SUSPEND == a2d->audio_stat.state)
+            {
+                xTaskNotifyGiveIndexed(ui_evt_task_handle, PLAYBACK_STATE_CHANGE_EVT);
             }
             break;
         }
@@ -787,4 +797,14 @@ void bt_app_rc_tg_cb(esp_avrc_tg_cb_event_t event, esp_avrc_tg_cb_param_t *param
             ESP_LOGE(BT_RC_TG_TAG, "Invalid AVRC event: %d", event);
             break;
     }
+}
+
+esp_a2d_audio_state_t bt_get_a2d_audio_state(void)
+{
+    return s_audio_state;
+}
+
+esp_a2d_connection_state_t bt_get_a2d_connection_state(void)
+{
+    return s_a2d_conn_state;
 }

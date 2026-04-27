@@ -54,7 +54,7 @@
     0x7300U /* Set transmit voltage to 115 dBμV = 115d = 0x73; Set antenna tuning capacitor to    \
                auto */
 #define TX_TUNE_FREQ_DEFAULT_VAL 0x2972U          /* Set frequency to 106.1 MHz = 10610d = 0x2972 */
-#define TX_COMPONENT_ENABLE_DEFAULT_VAL 0x0003U   /* Enable (Stereo) LMR and Pilot */
+#define TX_COMPONENT_ENABLE_DEFAULT_VAL 0x0007U   /* Enable RDS, (Stereo) LMR and Pilot */
 #define TX_ACOMP_THRESHOLD_DEFAULT_VAL 0xFFD8U    /* Threshold = –40 dBFS = 0xFFD8 */
 #define TX_ACOMP_GAIN_DEFAULT_VAL 0xFFD8U         /* Gain = 15 dB = 0xF */
 #define TX_ACOMP_RELEASE_TIME_DEFAULT_VAL 0x0000U /* Release time = 0 (100 ms) */
@@ -67,7 +67,43 @@
 #define TX_ASQ_LEVEL_HIGH_DEFAULT_VAL 0x00ECU    /* –20 dB = 0x00EC */
 #define TX_ASQ_DURATION_HIGH_DEFAULT_VAL 0x1388U /* 5000 ms = 0x1388 */
 #define TX_ASQ_INTERRUPT_SOURCE_DEFAULT_VAL                                                        \
-    0x0007U /* Enable overmodulation, high and low thresholds. */
+    0x0007U                                  /* Enable overmodulation, high and low thresholds. */
+#define TX_RDS_DEVIATION_DEFAULT_VAL 0x00C8U /* 2 kHz = 0xC8 */
+#define TX_RDS_INTERRUPT_SOURCE_DEFAULT_VAL 0x0001U /* RDS FIFO MT */
+#define TX_RDS_PI_DEFAULT_VAL 0x1269U               /* Program Identifier 4713 */
+#define TX_RDS_PS_MIX_DEFAULT_VAL 0x0003U           /* 50% RDS PS, 50% circular buffer/FIFO */
+#define TX_RDS_PS_MISC_DEFAULT_VAL 0x1008U          /* RDSD0 (stereo) and RDSMS (music) bits set */
+#define TX_RDS_PS_REPEAT_COUNT_DEFAULT_VAL 0x0003U  /* Repeat count 3 */
+#define TX_RDS_PS_MESSAGE_COUNT_DEFAULT_VAL 0x0003U /* Message count 3 */
+#define TX_RDS_PS_AF_DEFAULT_VAL 0xE0E0U            /* No alternative frequency */
+#define TX_RDS_FIFO_SIZE_DEFAULT_VAL 0x0004U        /* 3 blocks (value must equal fifo_size + 1) */
+
+/* RDS commands parameters */
+#define TX_RDS_PS_ARG_CNT 5U
+
+#define TX_RDS_BUFF_ARG_CNT 7U
+#define TX_RDS_BUFF_RESP_LEN 5U
+
+#define TX_RDS_BUFF_INTACK_POS 0U
+#define TX_RDS_BUFF_MTBUFF_POS 1U
+#define TX_RDS_BUFF_LDBUFF_POS 2U
+#define TX_RDS_BUFF_FIFO_POS 3U
+
+#define TX_RDS_BUFF_RESP_RDSPSXMIT_POS 4U
+#define TX_RDS_BUFF_RESP_CBUFXMIT_POS 3U
+#define TX_RDS_BUFF_RESP_FIFOXMIT_POS 2U
+#define TX_RDS_BUFF_RESP_CBUFWRAP_POS 1U
+#define TX_RDS_BUFF_RESP_FIFOMT_POS 0U
+
+#define TX_RDS_BUFF_RESP_FIFOUSED_BYTE 4U
+#define TX_RDS_BUFF_RESP_FIFOAVAIL_BYTE 3U
+#define TX_RDS_BUFF_RESP_CBUSED_BYTE 2U
+#define TX_RDS_BUFF_RESP_CBAVAIL_BYTE 1U
+#define TX_RDS_BUFF_RESP_RDSPSXMIT_BYTE 0U
+#define TX_RDS_BUFF_RESP_CBUFXMIT_BYTE 0U
+#define TX_RDS_BUFF_RESP_FIFOXMIT_BYTE 0U
+#define TX_RDS_BUFF_RESP_CBUFWRAP_BYTE 0U
+#define TX_RDS_BUFF_RESP_FIFOMT_BYTE 0U
 
 /* Response status bit positions */
 #define STATUS_CTS_BIT_POS 7U
@@ -75,6 +111,10 @@
 #define STATUS_RDSINT_BIT_POS 2U
 #define STATUS_ASQINT_BIT_POS 1U
 #define STATUS_STCINT_BIT_POS 0U
+
+/* RDS group types */
+#define RDS_GT_2A 0x20U
+#define RDS_GT_4A 0x40U
 
 /*==================================================================
     Function-like macros
